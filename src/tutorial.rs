@@ -1,7 +1,7 @@
 //! Read a tutorial directory, report format problems, and print its commands.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::index::{self, Problem};
 
@@ -30,18 +30,63 @@ pub(crate) fn script(dir: &Path) -> u8 {
     }
 }
 
-/// Play a one-window bash tutorial. The value is the process exit code.
-pub(crate) fn play(dir: &Path, transcript: &Path) -> u8 {
+/// Play a bash tutorial in the windows it declares. The value is the process exit code.
+pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup: bool) -> u8 {
+    play_as(dir, transcript, run, run_setup, None)
+}
+
+fn play_as(
+    dir: &Path,
+    transcript: &Path,
+    run: Option<&Path>,
+    run_setup: bool,
+    user: Option<u32>,
+) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
     };
-    if let Some(problem) = refuse_scope(&loaded) {
+    if let Some(problem) = refuse_scope(&loaded, run_setup) {
         emit(dir, &problem);
         return 1;
     }
-    let folder = loaded.windows[0].folder.clone();
-    match crate::play::drive(transcript, &loaded.play_commands, &folder) {
+    if run_setup {
+        if let Some((name, _)) = &loaded.setup {
+            match supplied_user(user) {
+                Ok(0) => {
+                    eprint!("{}", setup_as_root_message(name));
+                    return 1;
+                }
+                Ok(_) => {}
+                Err(message) => {
+                    eprint!("{message}");
+                    return 1;
+                }
+            }
+        }
+    }
+    if let Some(message) = unmet_needs(&loaded) {
+        eprint!("{message}");
+        return 1;
+    }
+    if let Some(path) = run {
+        if let Some(message) = run_directory_problem(path) {
+            eprint!("{message}");
+            return 1;
+        }
+    }
+    let windows = loaded
+        .windows
+        .iter()
+        .map(|window| (window.name.clone(), window.folder.clone()))
+        .collect::<Vec<_>>();
+    let setup = if run_setup {
+        loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
+    } else {
+        None
+    };
+    let setup = setup.as_ref().map(|(name, path)| (name.as_str(), path.as_path()));
+    match crate::play::drive(transcript, &loaded.play_commands, &windows, run, setup) {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -60,6 +105,8 @@ pub(crate) struct PlayCommand {
     pub body: String,
     /// Status the block declares. Absent means 0.
     pub expected: u8,
+    /// Window this command runs in.
+    pub window: String,
     /// The fence carries `if=`, so this command chooses a setting.
     pub chooses_setting: bool,
 }
@@ -121,19 +168,14 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
 
     let index::Tutorial { pages, windows, settings, mut problems, shell, shell_line, setup } =
         tutorial;
+    let mut read = Read {
+        blocks: Vec::new(),
+        play_commands: Vec::new(),
+        current_window: windows.first().map(|window| window.name.clone()).unwrap_or_default(),
+    };
     let mut commands = 0_usize;
-    let mut blocks = Vec::new();
-    let mut play_commands = Vec::new();
     for page in &pages {
-        commands += read_page(
-            dir,
-            page,
-            &windows,
-            &settings,
-            &mut problems,
-            &mut blocks,
-            &mut play_commands,
-        );
+        commands += read_page(dir, page, &windows, &settings, &mut problems, &mut read);
     }
     match markdown_pages(dir) {
         Ok(found) => {
@@ -161,13 +203,19 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
     Ok(Loaded {
         pages: pages.len(),
         commands,
-        blocks,
-        play_commands,
+        blocks: read.blocks,
+        play_commands: read.play_commands,
         shell,
         shell_line,
         setup,
         windows,
     })
+}
+
+struct Read {
+    blocks: Vec<Block>,
+    play_commands: Vec<PlayCommand>,
+    current_window: String,
 }
 
 fn read_page(
@@ -176,8 +224,7 @@ fn read_page(
     windows: &[index::Window],
     settings: &[index::Setting],
     problems: &mut Vec<Problem>,
-    blocks: &mut Vec<Block>,
-    play_commands: &mut Vec<PlayCommand>,
+    read: &mut Read,
 ) -> usize {
     let path = dir.join(&page.path);
     if !path.is_file() {
@@ -240,15 +287,18 @@ fn read_page(
         }
         if fence.mode.is_none() {
             commands += 1;
-            play_commands.push(PlayCommand {
+            let window = fence.window.clone().unwrap_or_else(|| read.current_window.clone());
+            read.current_window.clone_from(&window);
+            read.play_commands.push(PlayCommand {
                 page: page.path.clone(),
                 line: fence.line,
                 body: fence.body.clone(),
                 expected: fence.status.unwrap_or(0),
+                window,
                 chooses_setting: fence.setting.is_some(),
             });
         }
-        blocks.push(Block {
+        read.blocks.push(Block {
             page: page.path.clone(),
             window: fence.window.clone(),
             body: fence.body.clone(),
@@ -321,7 +371,64 @@ fn relative_name(dir: &Path, path: &Path) -> String {
         .join("/")
 }
 
-fn refuse_scope(loaded: &Loaded) -> Option<Problem> {
+fn run_directory_problem(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    if !path.is_dir() {
+        return Some(format!("{} is not a directory\n", path.display()));
+    }
+    match fs::read_dir(path) {
+        Ok(mut entries) => entries.next().map(|_| format!("{} is not empty\n", path.display())),
+        Err(error) => Some(format!("cannot read {}: {error}\n", path.display())),
+    }
+}
+
+fn setup_as_root_message(script: &str) -> String {
+    format!("play does not run the set-up script {script} as root\n")
+}
+
+fn supplied_user(user: Option<u32>) -> Result<u32, String> {
+    if let Some(user) = user {
+        return Ok(user);
+    }
+    current_user_id()
+}
+
+fn current_user_id() -> Result<u32, String> {
+    let output = std::process::Command::new("id")
+        .arg("-u")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("cannot read the user id: {error}\n"))?;
+    if !output.status.success() {
+        return Err("cannot read the user id\n".to_string());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "cannot read the user id\n".to_string())
+}
+
+fn unmet_needs(loaded: &Loaded) -> Option<String> {
+    let needs = loaded
+        .windows
+        .iter()
+        .flat_map(|window| window.needs.iter())
+        .map(|need| (need.program.as_str(), need.minimum.as_deref()))
+        .collect::<Vec<_>>();
+    crate::play::unmet_need(&needs)
+}
+
+fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
+    let joined = dir.join(relative);
+    if joined.is_absolute() {
+        return joined;
+    }
+    std::env::current_dir().map(|cwd| cwd.join(joined)).unwrap_or(dir.join(relative))
+}
+
+fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
     if matches!(loaded.shell, index::Shell::Zsh) {
         return Some(Problem {
             relative: "tutorial.toml".to_string(),
@@ -329,24 +436,14 @@ fn refuse_scope(loaded: &Loaded) -> Option<Problem> {
             message: "play --auto runs bash; this tutorial declares zsh".to_string(),
         });
     }
-    if loaded.windows.len() != 1 {
-        let names = loaded.windows.iter().map(|window| window.name.as_str()).collect::<Vec<_>>();
-        let line = loaded.windows.first().map(|window| window.line).unwrap_or(1);
-        return Some(Problem {
-            relative: "tutorial.toml".to_string(),
-            line,
-            message: format!(
-                "play --auto runs one window; this tutorial declares {}",
-                names.join(", ")
-            ),
-        });
-    }
-    if let Some((path, line)) = &loaded.setup {
-        return Some(Problem {
-            relative: "tutorial.toml".to_string(),
-            line: *line,
-            message: format!("play stops before the set-up script {path}"),
-        });
+    if !run_setup {
+        if let Some((path, line)) = &loaded.setup {
+            return Some(Problem {
+                relative: "tutorial.toml".to_string(),
+                line: *line,
+                message: format!("play stops before the set-up script {path}"),
+            });
+        }
     }
     if let Some(command) = loaded.play_commands.iter().find(|command| command.chooses_setting) {
         return Some(Problem {
@@ -399,4 +496,78 @@ fn emit(dir: &Path, problem: &Problem) {
     let path =
         if problem.relative.is_empty() { dir.to_path_buf() } else { dir.join(&problem.relative) };
     eprintln!("{}:{}: {}", path.display(), problem.line, problem.message);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::play_as;
+
+    fn temp(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("tutorial-stepper-{name}"));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn the_set_up_script_is_refused_when_the_user_is_root() {
+        let root = temp("root-setup");
+        fs::create_dir_all(&root).expect("the tutorial directory");
+        fs::write(
+            root.join("tutorial.toml"),
+            "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        )
+        .expect("the index");
+        fs::write(root.join("welcome.md"), "```bash { window=bob }\necho hi\n```\n")
+            .expect("the page");
+        let marker = root.join("marker");
+        fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
+            .expect("the set-up script");
+        let run = temp("root-setup-run");
+        let transcript = root.join("transcript.toml");
+        let code = play_as(&root, &transcript, Some(&run), true, Some(0));
+        assert_eq!(code, 1, "play ran the set-up script as root");
+        let message = super::setup_as_root_message("setup.sh");
+        assert!(message.contains("setup.sh"), "{message}");
+        assert!(message.contains("as root"), "{message}");
+        assert!(!marker.exists(), "the set-up script ran");
+        assert!(!transcript.exists(), "a refused run wrote a transcript");
+        assert!(!run.exists(), "a refused run created the run directory");
+    }
+
+    #[test]
+    fn a_set_up_script_still_runs_for_a_user_who_is_not_root() {
+        let root = temp("user-setup");
+        fs::create_dir_all(&root).expect("the tutorial directory");
+        fs::write(
+            root.join("tutorial.toml"),
+            "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        )
+        .expect("the index");
+        fs::write(root.join("welcome.md"), "```bash { window=bob }\necho hi\n```\n")
+            .expect("the page");
+        let marker = root.join("marker");
+        fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
+            .expect("the set-up script");
+        let transcript = root.join("transcript.toml");
+        let code = play_as(&root, &transcript, None, true, Some(1000));
+        assert_eq!(code, 0, "a non-root user was refused");
+        assert_eq!(fs::read_to_string(&marker).expect("the script wrote the marker"), "ran");
+    }
 }

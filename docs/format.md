@@ -59,7 +59,7 @@ values = { SIGNING = "internal" }
 
 `shell` is `bash` or `zsh`. When it is absent, the shell is bash. `setup` is a relative path to the set-up script. Each window has a `name`, a `folder` relative to the run folder, and `needs`: a program name, or a program name followed by `>=` and a version. A setting has a name, a default, and the values allowed; the default is one of those values. A path is one tested combination: a name, and one allowed value for every setting. Names and setting values are single words.
 
-`check` parses `needs` and `setup` and checks that shape. It does not run the script and it does not look up the programs.
+`check` parses `needs` and `setup` and checks that shape. It does not run the script and it does not look up the programs. `play` looks up each needed program before the set-up script. A minimum version is the first dotted number in the text `PROGRAM --version` prints on either stream: digits, then at least one `.digits` group. Components compare as integers, and a missing component is 0. A program that prints no dotted number stops the run, and the message says so. A need with no minimum does not run the program. `play` runs the set-up script only with `--run-setup`, in the run folder, before the first page, as the user who started it.
 
 A key the format does not define is an error at that key's line. So is a page that is listed but missing, a Markdown page in the directory that is not listed, a setting whose default is not allowed, a path that misses a setting or names an unknown one or gives a value that is not allowed, and a second window, setting, or path with a name already used.
 
@@ -111,7 +111,7 @@ echo external
 
 A command is an attributed fence with no `mode`. On success, `check` prints one line on standard output, for example `1 page, 2 commands`, and exits 0. Each problem goes to standard error as `FILE:LINE: message`, and the command exits 1. The file is the directory that was named, joined with the page or with `tutorial.toml`.
 
-`tutorial-stepper script` prints those commands, and the observations, as one bash script. A block marked `mode=show` is left out. The reference is [Printing a tutorial as one script](script.md). `tutorial-stepper play --auto` runs the commands of a one-window bash tutorial and writes a transcript. The reference is [Playing a one-window tutorial unattended](play.md).
+`tutorial-stepper script` prints those commands, and the observations, as one bash script. A block marked `mode=show` is left out. The reference is [Printing a tutorial as one script](script.md). `tutorial-stepper play --auto` runs the commands in the windows the index declares and writes a transcript. The reference is [Playing a tutorial unattended](play.md).
 
 Any other spelling is an error at that fence's line. A JSON object (`{"window":"bob"}`), bare words after the language (`bash window=bob`), and Pandoc's braced class (`{.bash …}`) are all rejected. So is an unknown attribute, a `status` that is not an integer, a `mode` other than `show` or `observe`, and an `if` that is not `NAME:value`.
 

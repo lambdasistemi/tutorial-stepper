@@ -38,7 +38,9 @@ pub fn run() -> u8 {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
             Command::Script { dir } => script(&dir),
-            Command::Play { auto: _, dir, transcript } => play(&dir, &transcript),
+            Command::Play { auto: _, dir, transcript, run, run_setup } => {
+                play(&dir, &transcript, run.as_deref(), run_setup)
+            }
         },
         Err(err) => {
             let code = err.exit_code();
@@ -88,10 +90,10 @@ enum Command {
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
-    /// Play a one-window tutorial in a bash shell.
+    /// Play a tutorial in the bash shells its windows declare.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each command runs in one bash shell. The transcript records the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+        after_help = "Each command runs in the bash shell of its window. The transcript records the window, the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
     )]
     Play {
         /// Play the tutorial without stopping for a person.
@@ -100,6 +102,12 @@ enum Command {
         /// File that receives one entry per command that ran.
         #[arg(long, value_name = "FILE", required = true)]
         transcript: PathBuf,
+        /// Directory that keeps each window's folder. Removed at the end when absent.
+        #[arg(long, value_name = "DIR")]
+        run: Option<PathBuf>,
+        /// Run the declared set-up script before the first page.
+        #[arg(long)]
+        run_setup: bool,
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
@@ -113,6 +121,11 @@ fn script(dir: &std::path::Path) -> u8 {
     tutorial::script(dir)
 }
 
-fn play(dir: &std::path::Path, transcript: &std::path::Path) -> u8 {
-    tutorial::play(dir, transcript)
+fn play(
+    dir: &std::path::Path,
+    transcript: &std::path::Path,
+    run: Option<&std::path::Path>,
+    run_setup: bool,
+) -> u8 {
+    tutorial::play(dir, transcript, run, run_setup)
 }
