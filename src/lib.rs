@@ -1,5 +1,7 @@
 //! Check a tutorial's format, and step its commands into real shells.
 
+pub mod fence;
+
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
