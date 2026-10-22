@@ -15,5 +15,127 @@ jobs:
     name: Build Gate
     runs-on: nixos
     steps:
-      - name: Stub CI
-        run: echo "CI stub, replaced by the real CI with the first code"
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Warm the Nix store
+        working-directory: checkout
+        run: >-
+          nix build --quiet
+          .#default
+          .#tutorial-stepper-static
+          .#release-artifacts
+          .#checks.x86_64-linux.clippy
+          .#checks.x86_64-linux.nextest
+          .#checks.x86_64-linux.fmt
+          .#checks.x86_64-linux.deny
+          .#checks.x86_64-linux.doc
+          .#checks.x86_64-linux.version
+          .#devShells.x86_64-linux.default.inputDerivation
+
+  format:
+    name: Format
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: rustfmt
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.fmt
+
+  clippy:
+    name: Clippy
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: clippy, warnings denied
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.clippy
+
+  tests:
+    name: Tests
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: cargo-nextest
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.nextest
+
+  supply-chain:
+    name: Supply chain
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: cargo-deny
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.deny
+
+  api-reference:
+    name: API reference
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: rustdoc, warnings denied
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.doc
+
+  development-shell:
+    name: Development shell
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Test inside the development shell
+        working-directory: checkout
+        run: nix develop --accept-flake-config -c cargo test --locked

@@ -14,8 +14,8 @@ These do not read the index file.
 
 - [x] Add the Rust crate at the repository root: `Cargo.toml`, committed `Cargo.lock`, `rust-toolchain.toml`, `rustfmt.toml`, `deny.toml`. The binary's `--version` and `--help` meet the command-line bar, covered by a test.
 - [x] Add the Nix flake (`flake.nix`, `nix/toolchain.nix`, `nix/crane.nix`, `nix/packages.nix`, `nix/checks.nix`, `nix/release.nix`, `justfile`) so `nix flake check` runs formatting, clippy, the tests, cargo-deny, and rustdoc.
-- [ ] Replace `.github/workflows/ci.yml`. Keep a job named `Build Gate`. Add Format, Clippy, Tests, Supply chain, API reference, and Development shell, each depending on the build gate, all on `runs-on: nixos`.
-- [ ] Add release-please (`release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release.yml`) for the Rust crate. The release pull request is opened with a token minted from the organisation app. The release job uploads the Linux x86_64 binary and `SHA256SUMS`.
+- [x] Replace `.github/workflows/ci.yml`. Keep a job named `Build Gate`. Add Format, Clippy, Tests, Supply chain, API reference, and Development shell, each depending on the build gate, all on `runs-on: nixos`.
+- [x] Add release-please (`release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release.yml`) for the Rust crate. The release pull request is opened with a token minted from the organisation app. The release job uploads the Linux x86_64 binary and `SHA256SUMS`.
 
 ## Phase 3: Fence attributes
 
