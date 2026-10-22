@@ -181,7 +181,7 @@ fn play_one(
         .collect::<Vec<_>>();
     let initial = windows.first().map(|(name, _)| name.as_str()).unwrap_or("");
     let filter = if loaded.settings.is_empty() { None } else { Some(chosen) };
-    let commands = resolve_commands(&loaded.runnables, filter, initial);
+    let steps = resolve_steps(&loaded.runnables, filter, initial);
     let environment = environment_text(&loaded.settings, chosen);
     let setup = if run_setup {
         loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
@@ -191,7 +191,7 @@ fn play_one(
     let setup = setup.as_ref().map(|(name, script)| (name.as_str(), script.as_path()));
     crate::play::drive(
         transcript,
-        &commands,
+        &steps,
         &windows,
         run,
         setup,
@@ -244,8 +244,20 @@ fn prefix_first_line(name: &str, text: &str) -> String {
     }
 }
 
-/// One command fence: no `mode`, so it is typed into the shell.
-pub(crate) struct PlayCommand {
+/// Whether a block is typed as a command or as an observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlayKind {
+    /// An attributed fence with no `mode`.
+    Command,
+    /// An observation where it appears on the page.
+    Observation,
+    /// That observation again, after the path's other blocks.
+    ObservationAtEnd,
+}
+
+/// One block the unattended run types into a shell.
+#[derive(Clone)]
+pub(crate) struct PlayStep {
     /// Page path, as listed in the index.
     pub page: String,
     /// 1-based line of the opening fence.
@@ -254,8 +266,10 @@ pub(crate) struct PlayCommand {
     pub body: String,
     /// Status the block declares. Absent means 0.
     pub expected: u8,
-    /// Window this command runs in.
+    /// Window this block runs in.
     pub window: String,
+    /// Command, observation where it appears, or observation at the end of the path.
+    pub kind: PlayKind,
 }
 
 struct Runnable {
@@ -265,6 +279,7 @@ struct Runnable {
     expected: u8,
     declared_window: Option<String>,
     setting: Option<(String, String)>,
+    kind: PlayKind,
 }
 
 struct Loaded {
@@ -438,17 +453,21 @@ fn read_page(
         if fence.mode == Some(crate::fence::Mode::Show) {
             continue;
         }
-        if fence.mode.is_none() {
+        let kind = if fence.mode == Some(crate::fence::Mode::Observe) {
+            PlayKind::Observation
+        } else {
             commands += 1;
-            read.runnables.push(Runnable {
-                page: page.path.clone(),
-                line: fence.line,
-                body: fence.body.clone(),
-                expected: fence.status.unwrap_or(0),
-                declared_window: fence.window.clone(),
-                setting: fence.setting.clone(),
-            });
-        }
+            PlayKind::Command
+        };
+        read.runnables.push(Runnable {
+            page: page.path.clone(),
+            line: fence.line,
+            body: fence.body.clone(),
+            expected: fence.status.unwrap_or(0),
+            declared_window: fence.window.clone(),
+            setting: fence.setting.clone(),
+            kind,
+        });
         read.blocks.push(Block {
             page: page.path.clone(),
             window: fence.window.clone(),
@@ -623,29 +642,37 @@ fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
     None
 }
 
-fn resolve_commands(
-    commands: &[Runnable],
+fn resolve_steps(
+    runnables: &[Runnable],
     values: Option<&[(String, String)]>,
     initial: &str,
-) -> Vec<PlayCommand> {
+) -> Vec<PlayStep> {
     let mut current = initial.to_string();
-    let mut resolved = Vec::new();
-    for command in commands {
-        if !belongs(&command.setting, values) {
+    let mut steps = Vec::new();
+    let mut again = Vec::new();
+    for runnable in runnables {
+        if !belongs(&runnable.setting, values) {
             continue;
         }
-        if let Some(window) = &command.declared_window {
-            current.clone_from(window);
+        let window = runnable.declared_window.clone().unwrap_or_else(|| current.clone());
+        if runnable.kind == PlayKind::Command {
+            current.clone_from(&window);
         }
-        resolved.push(PlayCommand {
-            page: command.page.clone(),
-            line: command.line,
-            body: command.body.clone(),
-            expected: command.expected,
-            window: current.clone(),
-        });
+        let step = PlayStep {
+            page: runnable.page.clone(),
+            line: runnable.line,
+            body: runnable.body.clone(),
+            expected: runnable.expected,
+            window,
+            kind: runnable.kind,
+        };
+        if runnable.kind == PlayKind::Observation {
+            again.push(PlayStep { kind: PlayKind::ObservationAtEnd, ..step.clone() });
+        }
+        steps.push(step);
     }
-    resolved
+    steps.extend(again);
+    steps
 }
 
 fn environment_text(settings: &[index::Setting], values: &[(String, String)]) -> Option<String> {
@@ -669,10 +696,15 @@ fn environment_text(settings: &[index::Setting], values: &[(String, String)]) ->
 
 fn failure_text(dir: &Path, failure: crate::play::Failure) -> String {
     match failure {
-        crate::play::Failure::Status { page, line, body, got, expected } => {
+        crate::play::Failure::Status { page, line, body, got, expected, kind } => {
             let path = dir.join(page);
+            let (noun, place) = match kind {
+                PlayKind::Command => ("command", ""),
+                PlayKind::Observation => ("observation", ""),
+                PlayKind::ObservationAtEnd => ("observation", ", at the end of the path"),
+            };
             let mut text = format!(
-                "{}:{line}: command exited {got}, expected {expected}\n{body}",
+                "{}:{line}: {noun} exited {got}, expected {expected}{place}\n{body}",
                 path.display()
             );
             if !body.ends_with('\n') {

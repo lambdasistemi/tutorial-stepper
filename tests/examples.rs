@@ -44,6 +44,8 @@ fn valid_examples_pass_with_the_page_and_command_counts() {
         ("setup", "1 page, 2 commands\n"),
         ("settings", "1 page, 5 commands\n"),
         ("needs-missing", "1 page, 1 command\n"),
+        ("observe", "1 page, 2 commands\n"),
+        ("observe-gone", "1 page, 2 commands\n"),
     ];
     let mut seen: Vec<&str> = expected.iter().map(|(name, _)| *name).collect();
     seen.sort_unstable();

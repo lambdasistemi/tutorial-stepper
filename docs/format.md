@@ -113,7 +113,7 @@ echo external
 
 A command is an attributed fence with no `mode`. On success, `check` prints one line on standard output, for example `1 page, 2 commands`, and exits 0. Each problem goes to standard error as `FILE:LINE: message`, and the command exits 1. The file is the directory that was named, joined with the page or with `tutorial.toml`.
 
-`tutorial-stepper script` prints those commands, and the observations, as one bash script. A block marked `mode=show` is left out. The reference is [Printing a tutorial as one script](script.md). `tutorial-stepper play --auto` runs the commands in the windows the index declares, in the shell the index declares, and writes a transcript. An absent shell is bash. The reference is [Playing a tutorial unattended](play.md).
+`tutorial-stepper script` prints those commands, and the observations, as one bash script. A block marked `mode=show` is left out. The reference is [Printing a tutorial as one script](script.md). `tutorial-stepper play --auto` runs the commands, and runs each observation where it appears and again at the end of the path, in the windows and the shell the index declares, and writes a transcript. An absent shell is bash. The reference is [Playing a tutorial unattended](play.md).
 
 Any other spelling is an error at that fence's line. A JSON object (`{"window":"bob"}`), bare words after the language (`bash window=bob`), and Pandoc's braced class (`{.bash …}`) are all rejected. So is an unknown attribute, a `status` that is not an integer, a `mode` other than `show` or `observe`, and an `if` that is not `NAME:value`.
 

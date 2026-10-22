@@ -1,6 +1,6 @@
 # Playing a tutorial unattended
 
-A tutorial author runs `tutorial-stepper play --auto` on a tutorial directory and names a transcript file. The stepper starts its own tmux server, one shell per window the index declares, types each command into that window's shell, and waits until that shell's prompt says the command ended. The shell is zsh when the index says `shell = "zsh"`, and bash otherwise. The transcript records every command that ran. When a command exits with a status the block did not declare, the run stops and names that command.
+A tutorial author runs `tutorial-stepper play --auto` on a tutorial directory and names a transcript file. The stepper starts its own tmux server, one shell per window the index declares, types each command into that window's shell, and waits until that shell's prompt says the command ended. The shell is zsh when the index says `shell = "zsh"`, and bash otherwise. The transcript records every command that ran, and every observation run. When a block exits with a status it did not declare, the run stops and names that block.
 
 ## Who it is for
 
@@ -13,21 +13,25 @@ flowchart TD
   refuse["Refused before a shell starts"]
   env[".env in the run folder"]
   server["Private tmux server and one bash or zsh per window"]
-  command["One command, typed as written"]
+  command["One command or observation, typed as written"]
   hook["Prompt hook reports the end and the status"]
+  again["Every observation again, at the end of the path"]
   transcript["Transcript entry"]
-  stop["Stop, name the command, exit non-zero"]
+  stop["Stop, name the block, exit non-zero"]
   directory --> refuse
   directory --> env
   path --> env
   env --> server
   server --> command
   command --> hook
+  hook --> again
   hook --> transcript
+  again --> transcript
   hook --> stop
+  again --> stop
 ```
 
-A format problem, or a set-up script the author did not ask to run, is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell. When the index declares tested paths and `--path` is absent, each path repeats from `.env` in its own clean run folder. A path that fails does not skip the later paths.
+A format problem, or a set-up script the author did not ask to run, is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell. An observation is typed where it stands on the page. When that path's blocks are done, every observation runs once more, and that second run is its own transcript entry. When the index declares tested paths and `--path` is absent, each path repeats from `.env` in its own clean run folder. A path that fails does not skip the later paths.
 
 ## What runs
 
@@ -64,7 +68,7 @@ Before that script, and before the run folder is created, every `needs` entry is
 
 The shell loads the stepper's prompt hook. Bash reports from `PROMPT_COMMAND`. zsh reports from `precmd`. Either way the hook appends the exit status of the command that just ended, before the prompt is drawn. A command of several lines is sent as one bracketed paste, then Enter, so the shell runs it as one command. The stepper does not decide that a command ended by a deadline or by reading the output: a command that sleeps is waited out. The server is gone when the run ends, whether the run passed or failed.
 
-Commands run in index page order, then fence order. A command marked `window=NAME` runs in that window. A command that names no window runs in the window of the previous command, and the first such command runs in the first window the index declares. A block marked `mode=show` or `mode=observe` is not run and does not change that window. A directory change stays in the shell that ran it. A fence body is one command, including a command continued over several lines. A fence with no braces is not run and does not appear in the transcript. An absent `status` expects 0. The first command whose reported status differs is the last one recorded. Later commands are not run. Standard output is empty. Standard error names the page, the line, the command, the status the shell reported, and the status the block declared, as `FILE:LINE: message`. The command exits 1.
+Commands and observations run in index page order, then fence order. A block marked `window=NAME` runs in that window. A block that names no window runs in the window of the previous command, and the first such block runs in the first window the index declares. An observation does not change the window a later command inherits. A block marked `mode=show` is not run and does not change that window. After the last block of the path, every observation that belongs to the path runs again, in that same order and in the same windows. A directory change stays in the shell that ran it. A fence body is one block, including a command continued over several lines. A fence with no braces is not run and does not appear in the transcript. An absent `status` expects 0. The first block whose reported status differs is the last one recorded. Later blocks, including the runs at the end, are not run. Standard output is empty. Standard error names the page, the line, and the body. A command says `command exited`. An observation says `observation exited`, and a failure of the run at the end adds that it was at the end of the path. The command exits 1.
 
 A tutorial that `tutorial-stepper check` rejects prints the same problems and creates no transcript. The same is true of a tutorial this command refuses before starting a shell:
 
@@ -74,7 +78,7 @@ A tutorial that `tutorial-stepper check` rejects prints the same problems and cr
 
 ## The transcript
 
-The transcript is TOML. It is written only after a shell has started, and it is written whether the run passed or a command's status did not match. One table per command that ran, in that order:
+The transcript is TOML. It is written only after a shell has started, and it is written whether the run passed or a block's status did not match. One table per block that ran, in that order. A command is `[[command]]`. An observation is `[[observation]]`, and the run at the end of the path is a second table, not a second status on the first.
 
 ```toml
 [[command]]
@@ -86,9 +90,22 @@ status = 0
 start = "2026-10-22T21:07:53.123456789Z"
 end = "2026-10-22T21:07:53.456789012Z"
 output = "hi\n"
+
+[[observation]]
+page = "look.md"
+window = "bob"
+block = 5
+command = "test -s note && echo seen\n"
+status = 0
+start = "2026-10-22T21:07:53.123456789Z"
+end = "2026-10-22T21:07:53.456789012Z"
+output = "seen\n"
+position = "welcome.md:1"
 ```
 
-`page` is the path listed in the index. `window` is the window the command ran in. `block` is the line of the opening fence. `command` is the fence body as written. `status` is the exit status the prompt hook reported. `start` is the UTC time just before the command is typed, and `end` is the UTC time when the hook reports the end. Both are written `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`. `output` is the text the command wrote, without the prompt. A command that prints its working directory shows the window folder there. A command that writes nothing has an empty output. A run that plays no command writes an empty file. A tested path writes `path` first, set to that path's name. A run that is not a tested path writes no other keys.
+`page` is the path listed in the index. `window` is the window the block ran in. `block` is the line of the opening fence. `command` is the fence body as written. `status` is the exit status the prompt hook reported. `start` is the UTC time just before the block is typed, and `end` is the UTC time when the hook reports the end. Both are written `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`. `output` is the text the block wrote, without the prompt. A block that prints its working directory shows the window folder there. A block that writes nothing has an empty output. A run that plays nothing writes an empty file. A tested path writes `path` first, set to that path's name. A run that is not a tested path writes no `path` key.
+
+`position` is only on an observation. Where the observation appears on the page, it is the page and the line of the command that ran before it, written `PAGE:LINE`. When no command of the path has run yet, it is `start of path`. On the run at the end, it is `end of path`. `N commands played` counts commands. An observation is not in that count.
 
 A mistake in the command line exits 2. `tutorial-stepper play --help` describes the command.
 

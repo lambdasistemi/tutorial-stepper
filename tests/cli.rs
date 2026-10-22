@@ -125,6 +125,10 @@ fn play_help_describes_that_command_only() {
         "play help did not say how problems are printed:\n{text}"
     );
     assert!(text.contains("tutorial-stepper play --auto"), "play help had no example:\n{text}");
+    assert!(
+        text.contains("again at the end"),
+        "play help did not say an observation runs again at the end:\n{text}"
+    );
     assert!(!text.contains("Commands:"), "play help listed other commands:\n{text}");
     let lines = text.lines().count();
     assert!(lines <= 40, "play help is {lines} lines:\n{text}");
