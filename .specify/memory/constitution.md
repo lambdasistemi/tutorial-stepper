@@ -3,8 +3,8 @@ Sync Impact Report
 - Version change: template → 1.0.0 (first ratification)
 - Principles added: The Stepper Is the Product; The Source Is Plain CommonMark; Nothing Runs Unseen;
   A Tutorial Brings Its Own Environment; Every Tutorial Is a Test; The Shell Says When a Command Ended;
-  A Cursor Over the Tutorial; Settings Are Chosen at the Start; No Code for Any One Tutorial;
-  The Record Outranks the Code
+  A Cursor Over the Tutorial; Effects Can Be Observed at Any Time; Settings Are Chosen at the Start;
+  No Code for Any One Tutorial; The Record Outranks the Code
 - Sections added: Platform and Distribution; Development Workflow; Governance
 - Templates: .specify/templates/plan-template.md ✅ no change needed (its Constitution Check is filled
   per plan from this file); spec-template.md ✅ no change; tasks-template.md ✅ no change
@@ -42,8 +42,9 @@ A tutorial is one index file plus one CommonMark file per page. No syntax is inv
 - What a block needs beyond its language goes in the code fence's info string, after the language, as
   `key=value` pairs in braces: ` ```bash { window=bob status=19 } `. Values are single words.
 - Nothing about a block is inferred from its text: which window it runs in, the exit status it is
-  expected to end with, whether it runs at all, and the setting value it belongs to
-  (`if=SIGNING:external`) are written on the block.
+  expected to end with, how it runs (`mode=show` for a block that is only shown, `mode=observe` for
+  an observation), and the setting value it belongs to (`if=SIGNING:external`) are written on the
+  block.
 - Pages MUST render as ordinary code blocks on GitHub, in Pandoc and in MkDocs with `superfences`, and
   MUST stay runnable block by block in Runme.
 - The format, the index file and the meaning of every attribute are specified in this repository's
@@ -80,7 +81,7 @@ machine as Killercoda does.
 
 ### V. Every Tutorial Is a Test
 
-- Every tested path of a tutorial (Principle VIII) MUST play unattended from a clean start. The
+- Every tested path of a tutorial (Principle IX) MUST play unattended from a clean start. The
   unattended mode exits non-zero at the first unexpected status or failed check, and writes a
   transcript: each command with its output, its status and its time.
 - A tutorial that cannot play unattended is a defect in the tutorial or in the stepper.
@@ -96,8 +97,9 @@ machine as Killercoda does.
 The stepper keeps a position in the tutorial and nothing else.
 
 - Its verbs are: run (type the command and press Enter), push (place the command at the prompt for the
-  learner to edit and run; several lines go in as one bracketed paste), skip, interrupt (Ctrl-C) and
-  back (move the position to an earlier command).
+  learner to edit and run; several lines go in as one bracketed paste), skip, interrupt (Ctrl-C),
+  back (move the position to an earlier command) and observe (run an observation, Principle VIII,
+  without moving the position).
 - The stepper does not model, save or restore the shell's state. Back moves the position and leaves
   every effect in place; what to do about effects that cannot be repeated is the learner's call.
 - In the terminal face Enter runs and `e` pushes.
@@ -106,7 +108,25 @@ The stepper keeps a position in the tutorial and nothing else.
 - The record holds what actually ran, including a command the learner edited, never what the page
   said would run.
 
-### VIII. Settings Are Chosen at the Start
+### VIII. Effects Can Be Observed at Any Time
+
+A tutorial changes things: files, a chain, a running service. The learner may want to look at them
+whenever they like, not only when the page says so.
+
+- A block marked `mode=observe` is an observation: a command that looks at effects and changes
+  nothing the tutorial depends on. The author promises that; the stepper cannot check it.
+- An observation runs where it appears, like any block. From then on it stays on a list the learner
+  can run from at any time, without moving the position.
+- It runs in its own window, and only when that window's shell is at its prompt. When the window is
+  busy the stepper says so and runs nothing.
+- Its runs are recorded as observations, each with the position at which it ran.
+- The unattended run plays each observation where it appears and runs every observation again at the
+  end of the path, so a tested path proves its observations still work after all its effects.
+
+Rationale: the Singular demo's pages already say "run this now, and again whenever you like" for the
+wallets and for the chain's view of a transaction, and the learner has to scroll back and copy.
+
+### IX. Settings Are Chosen at the Start
 
 A tutorial can offer settings, and the learner's choices can send it down different branches.
 
@@ -126,7 +146,7 @@ Rationale: the Singular demo's learners needed shorter registry windows than the
 and could only get them by editing commands. A declared setting gives them the choice; the tested
 paths keep the author's promise to what they actually test.
 
-### IX. No Code for Any One Tutorial
+### X. No Code for Any One Tutorial
 
 - The stepper knows nothing of any one tutorial. Window names, the set-up script, the needs and the
   settings come from the tutorial's index file.
@@ -134,7 +154,7 @@ paths keep the author's promise to what they actually test.
 - `paolino/runmd`, which printed selected Markdown blocks as a bash script, is superseded: the stepper
   prints a tutorial's commands as one script.
 
-### X. The Record Outranks the Code
+### XI. The Record Outranks the Code
 
 Documentation, specifications, vision and acceptance outrank implementation, always. Code can be
 regenerated from a good record; the record cannot be regenerated from code.
