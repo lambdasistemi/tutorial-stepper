@@ -12,20 +12,20 @@
 
 Test first. The binary is the subject: a test runs `tutorial-stepper script` and fails because the command is not there yet.
 
-- [ ] A failing test that `examples/one-window` prints the shebang, then `# welcome.md, window bob`, then `echo hi`, and exits 0.
-- [ ] A failing test that `examples/mode` includes the observation and the command, in that order, and leaves out the `mode=show` block.
-- [ ] A failing test that `examples/status` includes the command, and that `examples/if` includes both setting branches in page order.
-- [ ] A failing test that a tutorial with two pages prints in index order, that an ordinary code block is left out, and that a fence with no window is commented `window not named`.
-- [ ] A failing test that every tutorial under `examples/invalid/` prints empty standard output, the same standard error as `check`, and exits non-zero.
-- [ ] A failing test that `bash -n` accepts the script of every sound example, and that `script --help` describes the command on one screen.
-- [ ] The smallest command that makes those tests pass. The fence body is copied from the page. `check`'s confirmation and its problem lines stay as they are.
-- [ ] `docs/script.md`, and the README sentence that `paolino/runmd` is superseded by `tutorial-stepper script`, in the same commit as the command.
+- [x] A failing test that `examples/one-window` prints the shebang, then `# welcome.md, window bob`, then `echo hi`, and exits 0.
+- [x] A failing test that `examples/mode` includes the observation and the command, in that order, and leaves out the `mode=show` block.
+- [x] A failing test that `examples/status` includes the command, and that `examples/if` includes both setting branches in page order.
+- [x] A failing test that a tutorial with two pages prints in index order, that an ordinary code block is left out, and that a fence with no window is commented `window not named`.
+- [x] A failing test that every tutorial under `examples/invalid/` prints empty standard output, the same standard error as `check`, and exits non-zero.
+- [x] A failing test that `bash -n` accepts the script of every sound example, and that `script --help` describes the command on one screen.
+- [x] The smallest command that makes those tests pass. The fence body is copied from the page. `check`'s confirmation and its problem lines stay as they are.
+- [x] `docs/script.md`, and the README sentence that `paolino/runmd` is superseded by `tutorial-stepper script`, in the same commit as the command.
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then `tutorial-stepper script` on each sound example, piped to `bash -n`.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then `tutorial-stepper script` on each sound example, piped to `bash -n`.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 

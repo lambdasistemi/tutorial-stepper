@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/lambdasistemi/tutorial-stepper"
 rust-version = "1.85"
-description = "Check a Markdown tutorial's format, and step its commands into real shells."
+description = "Check a Markdown tutorial's format, print its commands as one script, and step them into real shells."
 publish = false
 
 [dependencies]
