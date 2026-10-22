@@ -119,11 +119,141 @@ fn one_window_records_the_command_its_output_and_its_status() {
     assert_eq!(string_field(command, "command"), "echo hi\n");
     assert_eq!(status_field(command), 0);
     assert_eq!(string_field(command, "output"), "hi\n");
+    assert_eq!(string_field(command, "window"), "bob");
     let start = string_field(command, "start");
     let end = string_field(command, "end");
     assert!(start <= end, "start {start} is after end {end}");
     assert_eq!(start.len(), 30, "{start}");
     assert!(start.ends_with('Z') && end.ends_with('Z'));
+    server_is_gone(pid);
+}
+
+#[test]
+fn two_windows_run_in_their_own_folders() {
+    let dir = manifest_dir().join("examples/two-windows");
+    let transcript = temp_tutorial("two-windows-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "3 commands played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 3, "{commands:?}");
+    assert_eq!(string_field(commands.get(0).expect("alice"), "window"), "alice");
+    assert!(
+        string_field(commands.get(0).expect("alice"), "output").trim_end().ends_with("/alice"),
+        "alice ran in {}",
+        string_field(commands.get(0).expect("alice"), "output")
+    );
+    assert_eq!(string_field(commands.get(1).expect("bob"), "window"), "bob");
+    assert!(
+        string_field(commands.get(1).expect("bob"), "output").trim_end().ends_with("/bob"),
+        "bob ran in {}",
+        string_field(commands.get(1).expect("bob"), "output")
+    );
+    assert_eq!(string_field(commands.get(2).expect("continued"), "window"), "bob");
+    assert!(
+        string_field(commands.get(2).expect("continued"), "output").trim_end().ends_with("/bob"),
+        "the unnamed command ran in {}",
+        string_field(commands.get(2).expect("continued"), "output")
+    );
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_directory_change_stays_in_that_window() {
+    let root = temp_tutorial("window-cd");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "\
+```bash { window=alice }
+cd /tmp
+```
+
+```bash { window=bob }
+pwd
+```
+
+```bash { window=alice }
+pwd
+```
+
+```bash { }
+echo stayed
+```
+",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 4, "{commands:?}");
+    assert!(
+        string_field(commands.get(1).expect("bob"), "output").trim_end().ends_with("/bob"),
+        "bob ran in {}",
+        string_field(commands.get(1).expect("bob"), "output")
+    );
+    assert_eq!(string_field(commands.get(2).expect("alice again"), "output").trim(), "/tmp");
+    assert_eq!(string_field(commands.get(3).expect("unnamed"), "window"), "alice");
+    assert_eq!(string_field(commands.get(3).expect("unnamed"), "output"), "stayed\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_shown_block_does_not_change_the_window() {
+    let root = temp_tutorial("window-show");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "\
+```bash { window=alice }
+echo from-alice
+```
+
+```bash { window=bob mode=show }
+echo shown
+```
+
+```bash { }
+echo still-alice
+```
+",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(string_field(commands.get(0).expect("alice"), "window"), "alice");
+    assert_eq!(string_field(commands.get(1).expect("still"), "window"), "alice");
+    assert_eq!(string_field(commands.get(1).expect("still"), "output"), "still-alice\n");
+    let body = fs::read_to_string(&transcript).expect("the transcript");
+    assert!(!body.contains("shown"), "{body}");
     server_is_gone(pid);
 }
 
@@ -237,7 +367,7 @@ fn a_broken_tutorial_prints_the_same_problems_and_writes_no_transcript() {
 }
 
 #[test]
-fn zsh_several_windows_a_setup_script_and_a_setting_are_refused() {
+fn zsh_a_setup_script_and_a_setting_are_refused() {
     let zsh = manifest_dir().join("examples/if");
     let zsh_transcript = temp_tutorial("zsh-transcript").join("transcript.toml");
     let (output, pid) = play(&zsh, &zsh_transcript);
@@ -245,31 +375,6 @@ fn zsh_several_windows_a_setup_script_and_a_setting_are_refused() {
     let err = text(&output.stderr);
     assert!(err.contains("bash") && err.contains("zsh"), "{err}");
     assert!(!zsh_transcript.exists());
-    server_is_gone(pid);
-
-    let windows = temp_tutorial("two-windows");
-    write_tutorial(
-        &windows,
-        "\
-pages = [\"welcome.md\"]
-
-[[window]]
-name = \"alice\"
-folder = \"alice\"
-
-[[window]]
-name = \"bob\"
-folder = \"bob\"
-",
-        "```bash { window=alice }\necho hi\n```\n",
-    );
-    let windows_transcript = windows.join("transcript.toml");
-    let (output, pid) = play(&windows, &windows_transcript);
-    assert_eq!(output.status.code(), Some(1));
-    let err = text(&output.stderr);
-    assert!(err.contains("one window"), "{err}");
-    assert!(err.contains("alice") && err.contains("bob"), "{err}");
-    assert!(!windows_transcript.exists());
     server_is_gone(pid);
 
     let setup = temp_tutorial("setup-script");

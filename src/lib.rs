@@ -88,10 +88,10 @@ enum Command {
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
-    /// Play a one-window tutorial in a bash shell.
+    /// Play a tutorial in the bash shells its windows declare.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each command runs in one bash shell. The transcript records the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+        after_help = "Each command runs in the bash shell of its window. The transcript records the window, the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
     )]
     Play {
         /// Play the tutorial without stopping for a person.

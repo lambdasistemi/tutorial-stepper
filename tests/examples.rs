@@ -40,6 +40,7 @@ fn valid_examples_pass_with_the_page_and_command_counts() {
         ("continued", "1 page, 1 command\n"),
         ("declared-status", "1 page, 1 command\n"),
         ("slow", "1 page, 1 command\n"),
+        ("two-windows", "1 page, 3 commands\n"),
     ];
     let mut seen: Vec<&str> = expected.iter().map(|(name, _)| *name).collect();
     seen.sort_unstable();

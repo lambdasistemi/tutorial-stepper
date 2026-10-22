@@ -19,7 +19,6 @@ pub(crate) struct Page {
 pub(crate) struct Window {
     pub name: String,
     pub folder: String,
-    pub line: usize,
 }
 
 pub(crate) enum Shell {
@@ -215,7 +214,7 @@ fn read_windows(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Win
                 format!("window \"{}\" is declared more than once", name.value),
             ));
         } else {
-            windows.push(Window { name: name.value.to_string(), folder, line: name.line });
+            windows.push(Window { name: name.value.to_string(), folder });
         }
         if let Some(needs) = table.get("needs") {
             check_needs(needs, text, problems);

@@ -30,7 +30,7 @@ pub(crate) fn script(dir: &Path) -> u8 {
     }
 }
 
-/// Play a one-window bash tutorial. The value is the process exit code.
+/// Play a bash tutorial in the windows it declares. The value is the process exit code.
 pub(crate) fn play(dir: &Path, transcript: &Path) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
@@ -40,8 +40,12 @@ pub(crate) fn play(dir: &Path, transcript: &Path) -> u8 {
         emit(dir, &problem);
         return 1;
     }
-    let folder = loaded.windows[0].folder.clone();
-    match crate::play::drive(transcript, &loaded.play_commands, &folder) {
+    let windows = loaded
+        .windows
+        .iter()
+        .map(|window| (window.name.clone(), window.folder.clone()))
+        .collect::<Vec<_>>();
+    match crate::play::drive(transcript, &loaded.play_commands, &windows) {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -60,6 +64,8 @@ pub(crate) struct PlayCommand {
     pub body: String,
     /// Status the block declares. Absent means 0.
     pub expected: u8,
+    /// Window this command runs in.
+    pub window: String,
     /// The fence carries `if=`, so this command chooses a setting.
     pub chooses_setting: bool,
 }
@@ -121,19 +127,14 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
 
     let index::Tutorial { pages, windows, settings, mut problems, shell, shell_line, setup } =
         tutorial;
+    let mut read = Read {
+        blocks: Vec::new(),
+        play_commands: Vec::new(),
+        current_window: windows.first().map(|window| window.name.clone()).unwrap_or_default(),
+    };
     let mut commands = 0_usize;
-    let mut blocks = Vec::new();
-    let mut play_commands = Vec::new();
     for page in &pages {
-        commands += read_page(
-            dir,
-            page,
-            &windows,
-            &settings,
-            &mut problems,
-            &mut blocks,
-            &mut play_commands,
-        );
+        commands += read_page(dir, page, &windows, &settings, &mut problems, &mut read);
     }
     match markdown_pages(dir) {
         Ok(found) => {
@@ -161,13 +162,19 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
     Ok(Loaded {
         pages: pages.len(),
         commands,
-        blocks,
-        play_commands,
+        blocks: read.blocks,
+        play_commands: read.play_commands,
         shell,
         shell_line,
         setup,
         windows,
     })
+}
+
+struct Read {
+    blocks: Vec<Block>,
+    play_commands: Vec<PlayCommand>,
+    current_window: String,
 }
 
 fn read_page(
@@ -176,8 +183,7 @@ fn read_page(
     windows: &[index::Window],
     settings: &[index::Setting],
     problems: &mut Vec<Problem>,
-    blocks: &mut Vec<Block>,
-    play_commands: &mut Vec<PlayCommand>,
+    read: &mut Read,
 ) -> usize {
     let path = dir.join(&page.path);
     if !path.is_file() {
@@ -240,15 +246,18 @@ fn read_page(
         }
         if fence.mode.is_none() {
             commands += 1;
-            play_commands.push(PlayCommand {
+            let window = fence.window.clone().unwrap_or_else(|| read.current_window.clone());
+            read.current_window.clone_from(&window);
+            read.play_commands.push(PlayCommand {
                 page: page.path.clone(),
                 line: fence.line,
                 body: fence.body.clone(),
                 expected: fence.status.unwrap_or(0),
+                window,
                 chooses_setting: fence.setting.is_some(),
             });
         }
-        blocks.push(Block {
+        read.blocks.push(Block {
             page: page.path.clone(),
             window: fence.window.clone(),
             body: fence.body.clone(),
@@ -327,18 +336,6 @@ fn refuse_scope(loaded: &Loaded) -> Option<Problem> {
             relative: "tutorial.toml".to_string(),
             line: loaded.shell_line.unwrap_or(1),
             message: "play --auto runs bash; this tutorial declares zsh".to_string(),
-        });
-    }
-    if loaded.windows.len() != 1 {
-        let names = loaded.windows.iter().map(|window| window.name.as_str()).collect::<Vec<_>>();
-        let line = loaded.windows.first().map(|window| window.line).unwrap_or(1);
-        return Some(Problem {
-            relative: "tutorial.toml".to_string(),
-            line,
-            message: format!(
-                "play --auto runs one window; this tutorial declares {}",
-                names.join(", ")
-            ),
         });
     }
     if let Some((path, line)) = &loaded.setup {

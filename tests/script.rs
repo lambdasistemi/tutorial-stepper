@@ -234,7 +234,7 @@ fn every_sound_example_is_a_bash_script() {
     let names = sound_examples();
     assert_eq!(
         names.join(" "),
-        "continued declared-status if mode one-window slow status",
+        "continued declared-status if mode one-window slow status two-windows",
         "every sound example is passed to bash -n"
     );
     for name in names {
