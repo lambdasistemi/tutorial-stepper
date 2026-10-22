@@ -3,7 +3,8 @@ Sync Impact Report
 - Version change: template → 1.0.0 (first ratification)
 - Principles added: The Stepper Is the Product; The Source Is Plain CommonMark; Nothing Runs Unseen;
   A Tutorial Brings Its Own Environment; Every Tutorial Is a Test; The Shell Says When a Command Ended;
-  A Cursor Over the Tutorial; No Code for Any One Tutorial; The Record Outranks the Code
+  A Cursor Over the Tutorial; Settings Are Chosen at the Start; No Code for Any One Tutorial;
+  The Record Outranks the Code
 - Sections added: Platform and Distribution; Development Workflow; Governance
 - Templates: .specify/templates/plan-template.md ✅ no change needed (its Constitution Check is filled
   per plan from this file); spec-template.md ✅ no change; tasks-template.md ✅ no change
@@ -41,7 +42,8 @@ A tutorial is one index file plus one CommonMark file per page. No syntax is inv
 - What a block needs beyond its language goes in the code fence's info string, after the language, as
   `key=value` pairs in braces: ` ```bash { window=bob status=19 } `. Values are single words.
 - Nothing about a block is inferred from its text: which window it runs in, the exit status it is
-  expected to end with, and whether it runs at all are written on the block.
+  expected to end with, whether it runs at all, and the setting value it belongs to
+  (`if=SIGNING:external`) are written on the block.
 - Pages MUST render as ordinary code blocks on GitHub, in Pandoc and in MkDocs with `superfences`, and
   MUST stay runnable block by block in Runme.
 - The format, the index file and the meaning of every attribute are specified in this repository's
@@ -78,9 +80,9 @@ machine as Killercoda does.
 
 ### V. Every Tutorial Is a Test
 
-- Every tutorial MUST play unattended from a clean start. The unattended mode exits non-zero at the
-  first unexpected status or failed check, and writes a transcript: each command with its output, its
-  status and its time.
+- Every tested path of a tutorial (Principle VIII) MUST play unattended from a clean start. The
+  unattended mode exits non-zero at the first unexpected status or failed check, and writes a
+  transcript: each command with its output, its status and its time.
 - A tutorial that cannot play unattended is a defect in the tutorial or in the stepper.
 
 ### VI. The Shell Says When a Command Ended
@@ -104,15 +106,35 @@ The stepper keeps a position in the tutorial and nothing else.
 - The record holds what actually ran, including a command the learner edited, never what the page
   said would run.
 
-### VIII. No Code for Any One Tutorial
+### VIII. Settings Are Chosen at the Start
 
-- The stepper knows nothing of any one tutorial. Window names, the set-up script and the needs come from
-  the tutorial's index file.
+A tutorial can offer settings, and the learner's choices can send it down different branches.
+
+- The index file declares each setting: a variable name, its default and the values it allows.
+- The learner chooses the values once, before the first page. The stepper writes them into a `.env`
+  in the run folder, and every window loads it. The page shows the values in force beside the
+  commands that use them. To choose again, the learner starts a new run.
+- A block or page marked `if=NAME:value` belongs to that value. Unmarked blocks and pages are shared,
+  so branches rejoin.
+- The author declares the tested paths: the combinations of values the unattended run plays
+  (Principle V).
+- The learner may choose any combination. When it is not a tested path, the stepper says so once and
+  plays it anyway.
+- The Killercoda renderer writes one scenario per tested path.
+
+Rationale: the Singular demo's learners needed shorter registry windows than the tutorial writes,
+and could only get them by editing commands. A declared setting gives them the choice; the tested
+paths keep the author's promise to what they actually test.
+
+### IX. No Code for Any One Tutorial
+
+- The stepper knows nothing of any one tutorial. Window names, the set-up script, the needs and the
+  settings come from the tutorial's index file.
 - The Singular demo (`lambdasistemi/singular-demo`) is a consumer and the first worked example.
 - `paolino/runmd`, which printed selected Markdown blocks as a bash script, is superseded: the stepper
   prints a tutorial's commands as one script.
 
-### IX. The Record Outranks the Code
+### X. The Record Outranks the Code
 
 Documentation, specifications, vision and acceptance outrank implementation, always. Code can be
 regenerated from a good record; the record cannot be regenerated from code.
