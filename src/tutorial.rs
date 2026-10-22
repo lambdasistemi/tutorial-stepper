@@ -20,7 +20,7 @@ pub(crate) fn check(dir: &Path) -> u8 {
     let text = match fs::read_to_string(&index_path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("{}:1: tutorial.toml is missing", dir.display());
+            eprintln!("{}:1: tutorial.toml is missing", index_path.display());
             return 1;
         }
         Err(_) => {

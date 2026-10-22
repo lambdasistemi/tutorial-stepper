@@ -125,5 +125,13 @@ fn invalid_examples_name_the_file_and_the_line() {
         for needle in *needles {
             assert!(got_err.contains(needle), "{relative} stderr missing {needle:?}:\n{got_err}");
         }
+        if *name == "missing-index" {
+            let index = prefix.join("tutorial.toml");
+            assert_eq!(
+                got_err.as_ref(),
+                format!("{}:1: tutorial.toml is missing\n", index.display()),
+                "{relative} names the missing index"
+            );
+        }
     }
 }
