@@ -9,21 +9,25 @@ The author, who wants the tutorial to run with nobody at the keyboard, whether t
 ```mermaid
 flowchart TD
   directory["Tutorial directory"]
+  path["Each tested path"]
   refuse["Refused before a shell starts"]
+  env[".env in the run folder"]
   server["Private tmux server and one bash or zsh per window"]
   command["One command, typed as written"]
   hook["Prompt hook reports the end and the status"]
   transcript["Transcript entry"]
   stop["Stop, name the command, exit non-zero"]
   directory --> refuse
-  directory --> server
+  directory --> env
+  path --> env
+  env --> server
   server --> command
   command --> hook
   hook --> transcript
   hook --> stop
 ```
 
-A format problem, a set-up script the author did not ask to run, or a command marked with a setting is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell.
+A format problem, or a set-up script the author did not ask to run, is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell. When the index declares tested paths and `--path` is absent, each path repeats from `.env` in its own clean run folder. A path that fails does not skip the later paths.
 
 ## What runs
 
@@ -31,7 +35,26 @@ A format problem, a set-up script the author did not ask to run, or a command ma
 tutorial-stepper play --auto examples/one-window --transcript transcript.toml
 ```
 
-`--auto` and `--transcript` are both required. A sound run prints `1 command played` or `N commands played` on standard output, leaves standard error empty, and exits 0.
+`--auto` and `--transcript` are both required. `--path NAME` plays that one tested path and prints `1 command played` or `N commands played`. Without `--path`, every tested path plays, and a path that played through prints `NAME: N commands played`. A sound run leaves standard error empty and exits 0. The command exits 1 when a path fails.
+
+## The values in force
+
+`--path NAME` takes the values of that tested path. The stepper writes them to `.env` in the run folder after the folder is created and before any window opens. One line per setting, in the order the index declares the settings:
+
+```text
+SIGNING=external
+PACE=slow
+```
+
+There is no `export`, no quotes, and no blank line. A newline follows each line, including the last. Values are single words, which is why nothing is quoted. A tutorial with no settings writes no `.env`.
+
+Each window's shell sources that file while it is starting, with every assignment exported, and only then installs the prompt hook. The load is not a command on a page, and it is not a transcript entry. A command on the page can read the variables. The transcript of a tested path adds `path`, set to that path's name, as the first key of each command.
+
+A name that is not a tested path is refused before a shell starts and before the run folder is created. The message is `tutorial.toml:1: path "NAME" is not a tested path`. Nothing is written.
+
+Without `--path`, a tutorial that declares tested paths plays each of them, in the order the index lists them. Each path starts from a clean run folder. With `--run DIR`, that folder is `DIR/<name>`, and `DIR` itself must be missing or empty. Without `--run`, each path's folder is temporary. A path that fails is reported, and the next path still starts. Standard error prints the failure this command already prints, with the path's name and a colon before the first line only. The command exits 1 if any path fails. The transcript is written once, after the paths that started a shell, and each command carries `path`.
+
+A tutorial that declares no tested path plays once. When it declares settings, `.env` holds the defaults, and a block marked `if=` runs only for the default it names. The report is `N commands played`, with no path name, and the transcript has no `path` key.
 
 The stepper looks up `tmux` on `PATH`, then the shell the index declares: `zsh` when the index says so, and `bash` otherwise. The first one missing is named, and nothing is started. A zsh tutorial that runs its set-up script also needs `bash`, because that script is bash. The server uses its own socket and does not read a tmux configuration file. Each declared window is one shell of that kind, started in that window's folder under the run folder. Without `--run` the run folder is temporary and is removed when the run ends. `--run DIR` keeps that directory: a missing `DIR` is created, an empty directory is used, and a directory that already holds anything is refused without being changed. A `DIR` that is a file is refused.
 
@@ -47,7 +70,7 @@ A tutorial that `tutorial-stepper check` rejects prints the same problems and cr
 
 - The tutorial declares a set-up script and `--run-setup` was not given. The message names the script. The script is not run.
 - The tutorial declares a set-up script, `--run-setup` was given, and the effective user is root. The message names the script and says it would run as root. The script is not run.
-- A command is marked `if=`. This command does not choose a setting. The message names that block.
+- `--path` names a path the index does not declare. The message names that path. The run folder is not created.
 
 ## The transcript
 
@@ -65,7 +88,7 @@ end = "2026-10-22T21:07:53.456789012Z"
 output = "hi\n"
 ```
 
-`page` is the path listed in the index. `window` is the window the command ran in. `block` is the line of the opening fence. `command` is the fence body as written. `status` is the exit status the prompt hook reported. `start` is the UTC time just before the command is typed, and `end` is the UTC time when the hook reports the end. Both are written `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`. `output` is the text the command wrote, without the prompt. A command that prints its working directory shows the window folder there. A command that writes nothing has an empty output. A run that plays no command writes an empty file. No other keys are written.
+`page` is the path listed in the index. `window` is the window the command ran in. `block` is the line of the opening fence. `command` is the fence body as written. `status` is the exit status the prompt hook reported. `start` is the UTC time just before the command is typed, and `end` is the UTC time when the hook reports the end. Both are written `YYYY-MM-DDTHH:MM:SS.NNNNNNNNNZ`. `output` is the text the command wrote, without the prompt. A command that prints its working directory shows the window folder there. A command that writes nothing has an empty output. A run that plays no command writes an empty file. A tested path writes `path` first, set to that path's name. A run that is not a tested path writes no other keys.
 
 A mistake in the command line exits 2. `tutorial-stepper play --help` describes the command.
 

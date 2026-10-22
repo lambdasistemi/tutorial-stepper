@@ -97,6 +97,7 @@ fn script_help_describes_that_command_only() {
         text.contains("observation"),
         "script help did not say that an observation is included:\n{text}"
     );
+    assert!(text.contains("--path"), "script help did not name --path:\n{text}");
     assert!(
         text.contains("FILE:LINE: message"),
         "script help did not say how problems are printed:\n{text}"
@@ -116,6 +117,7 @@ fn play_help_describes_that_command_only() {
     assert!(text.contains("--transcript"), "play help did not name --transcript:\n{text}");
     assert!(text.contains("--run"), "play help did not name --run:\n{text}");
     assert!(text.contains("--run-setup"), "play help did not name --run-setup:\n{text}");
+    assert!(text.contains("--path"), "play help did not name --path:\n{text}");
     assert!(text.contains("<DIR>"), "play help did not name the directory:\n{text}");
     assert!(text.contains("<FILE>"), "play help did not name the transcript file:\n{text}");
     assert!(
