@@ -60,7 +60,7 @@ GitHub, Pandoc and MkDocs show this as an ordinary bash block.
 `tutorial-stepper script` prints its runnable commands as one bash script.
 [paolino/runmd](https://github.com/paolino/runmd) is superseded by that command.
 Version 0 of the format is [docs/format.md](docs/format.md), and the script
-command is [docs/script.md](docs/script.md). `tutorial-stepper play --auto` plays a bash tutorial unattended, in the windows the index declares, and writes a transcript; that command is [docs/play.md](docs/play.md). The principles every change follows are in the
+command is [docs/script.md](docs/script.md). `tutorial-stepper play --auto` plays a tutorial unattended, in the shell and the windows the index declares, and writes a transcript; that command is [docs/play.md](docs/play.md). The principles every change follows are in the
 [constitution](.specify/memory/constitution.md). The first consumer is the
 [Singular demo](https://github.com/lambdasistemi/singular-demo), whose terminal tutorial this project
 replaces.

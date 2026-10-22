@@ -27,6 +27,7 @@ pub(crate) struct Window {
     pub needs: Vec<Need>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum Shell {
     Bash,
     Zsh,
@@ -43,7 +44,6 @@ pub(crate) struct Tutorial {
     pub settings: Vec<Setting>,
     pub problems: Vec<Problem>,
     pub shell: Shell,
-    pub shell_line: Option<usize>,
     pub setup: Option<(String, usize)>,
 }
 
@@ -73,7 +73,6 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
     let mut raw_paths = Vec::new();
     let mut saw_pages = false;
     let mut shell = Shell::Bash;
-    let mut shell_line = None;
     let mut setup = None;
 
     for (key_name, item) in document.iter() {
@@ -83,9 +82,8 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
         let key_span = document.key(key_name).and_then(toml_edit::Key::span);
         match key_name {
             "shell" => {
-                if let Some((found, line)) = read_shell(item, text, &mut problems) {
+                if let Some(found) = read_shell(item, text, &mut problems) {
                     shell = found;
-                    shell_line = Some(line);
                 }
             }
             "setup" => {
@@ -120,14 +118,14 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
         ));
     }
 
-    Ok(Tutorial { pages, windows, settings, problems, shell, shell_line, setup })
+    Ok(Tutorial { pages, windows, settings, problems, shell, setup })
 }
 
-fn read_shell(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Option<(Shell, usize)> {
+fn read_shell(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Option<Shell> {
     let located = read_string(item, text, "shell", problems)?;
     match located.value {
-        "bash" => Some((Shell::Bash, located.line)),
-        "zsh" => Some((Shell::Zsh, located.line)),
+        "bash" => Some(Shell::Bash),
+        "zsh" => Some(Shell::Zsh),
         _ => {
             problems.push(at(located.line, "shell must be bash or zsh".to_string()));
             None

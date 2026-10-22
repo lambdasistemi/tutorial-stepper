@@ -1,4 +1,4 @@
-//! One bash shell per window on a private tmux server, and the transcript of what ran.
+//! One shell per window on a private tmux server, and the transcript of what ran.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -56,31 +56,42 @@ struct Session {
     run_dir: PathBuf,
     keep_run: bool,
     control_dir: PathBuf,
-    hook_path: PathBuf,
     panes: Vec<Pane>,
     marker: String,
+    shell_name: String,
 }
 
 /// Play `commands` in `windows` and write `transcript`. The count is how many ran.
 /// Each window is a name and its folder relative to the run folder.
+/// `shell` is the shell the index declares.
 pub(crate) fn drive(
     transcript: &Path,
     commands: &[PlayCommand],
     windows: &[(String, String)],
     run: Option<&Path>,
     setup: Option<(&str, &Path)>,
+    shell: crate::index::Shell,
 ) -> Result<usize, Failure> {
     if windows.is_empty() {
         return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
     }
     let tmux = require_program("tmux")?;
-    let bash = require_program("bash")?;
+    let shell_program = match shell {
+        crate::index::Shell::Bash => "bash",
+        crate::index::Shell::Zsh => "zsh",
+    };
+    let shell_path = require_program(shell_program)?;
     ensure_transcript_directory(transcript)?;
-    let mut session = Session::prepare(tmux, windows, run)?;
+    let mut session = Session::prepare(tmux, windows, run, shell_program)?;
     if let Some((name, script)) = setup {
+        let bash = if matches!(shell, crate::index::Shell::Bash) {
+            shell_path.clone()
+        } else {
+            require_program("bash")?
+        };
         run_setup(&bash, &session.run_dir, name, script)?;
     }
-    session.start(&bash)?;
+    session.start(&shell_path, shell)?;
     session.run(commands, transcript)
 }
 
@@ -234,6 +245,7 @@ impl Session {
         tmux: PathBuf,
         windows: &[(String, String)],
         run: Option<&Path>,
+        shell_name: &str,
     ) -> Result<Self, Failure> {
         let suffix = unique_suffix();
         let keep_run = run.is_some();
@@ -272,19 +284,19 @@ impl Session {
         Ok(Self {
             tmux,
             socket: format!("tutorial-stepper-{suffix}"),
-            hook_path: control_dir.join("hook"),
             marker: format!("tutorial-stepper-prompt-{suffix}"),
             run_dir,
             keep_run,
             control_dir,
             panes,
+            shell_name: shell_name.to_string(),
         })
     }
 
-    fn start(&mut self, bash: &Path) -> Result<(), Failure> {
-        self.write_hook()?;
+    fn start(&mut self, shell: &Path, kind: crate::index::Shell) -> Result<(), Failure> {
+        self.write_hook(kind)?;
         for index in 0..self.panes.len() {
-            self.write_launcher(index, bash)?;
+            self.write_launcher(index, shell, kind)?;
         }
         self.spawn_all()?;
         for index in 0..self.panes.len() {
@@ -341,20 +353,45 @@ impl Session {
             .ok_or_else(|| Failure::Report(format!("window \"{name}\" has no shell\n")))
     }
 
-    fn write_hook(&self) -> Result<(), Failure> {
-        fs::write(&self.hook_path, HOOK)
+    fn write_hook(&self, kind: crate::index::Shell) -> Result<(), Failure> {
+        let (path, text) = match kind {
+            crate::index::Shell::Bash => (self.control_dir.join("hook"), BASH_HOOK),
+            crate::index::Shell::Zsh => {
+                let dir = self.control_dir.join("zdot");
+                fs::create_dir_all(&dir).map_err(|error| {
+                    Failure::Report(format!("cannot prepare the shell: {error}\n"))
+                })?;
+                (dir.join(".zshrc"), ZSH_HOOK)
+            }
+        };
+        fs::write(path, text)
             .map_err(|error| Failure::Report(format!("cannot prepare the shell: {error}\n")))
     }
 
-    fn write_launcher(&self, index: usize, bash: &Path) -> Result<(), Failure> {
+    fn write_launcher(
+        &self,
+        index: usize,
+        shell: &Path,
+        kind: crate::index::Shell,
+    ) -> Result<(), Failure> {
         let pane = &self.panes[index];
-        let launcher = format!(
-            "#!/bin/sh\nunset BASH_ENV\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {bash} --noprofile --rcfile {hook}\n",
-            status = sh_single(&pane.status_path.display().to_string()),
-            prompt = sh_single(&self.marker),
-            bash = sh_single(&bash.display().to_string()),
-            hook = sh_single(&self.hook_path.display().to_string()),
-        );
+        let status = sh_single(&pane.status_path.display().to_string());
+        let prompt = sh_single(&self.marker);
+        let program = sh_single(&shell.display().to_string());
+        let launcher = match kind {
+            crate::index::Shell::Bash => {
+                let hook = sh_single(&self.control_dir.join("hook").display().to_string());
+                format!(
+                    "#!/bin/sh\nunset BASH_ENV\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {program} --noprofile --rcfile {hook}\n"
+                )
+            }
+            crate::index::Shell::Zsh => {
+                let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
+                format!(
+                    "#!/bin/sh\nunset ENV\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                )
+            }
+        };
         fs::write(&pane.launcher_path, launcher)
             .map_err(|error| Failure::Report(format!("cannot prepare the shell: {error}\n")))?;
         let mut permissions = fs::metadata(&pane.launcher_path)
@@ -451,7 +488,7 @@ impl Session {
                 return Ok(());
             }
             if !self.pane_alive(index) {
-                return Err(shell_died(&window));
+                return Err(self.shell_died(&window));
             }
             thread::sleep(POLL);
         }
@@ -461,10 +498,11 @@ impl Session {
         let window = self.panes[index].name.clone();
         let text = self.read_status(index);
         let lines = complete_lines(&text);
-        let line = lines.last().copied().ok_or_else(|| shell_died(&window))?;
+        let line = lines.last().copied().ok_or_else(|| self.shell_died(&window))?;
         line.parse::<u8>().map_err(|_| {
             Failure::Report(format!(
-                "the bash shell in window {window} reported {line:?}, which is not a status\n"
+                "the {} shell in window {window} reported {line:?}, which is not a status\n",
+                self.shell_name
             ))
         })
     }
@@ -479,7 +517,7 @@ impl Session {
                 return Ok(output);
             }
             if !self.pane_alive(index) {
-                return Err(shell_died(&window));
+                return Err(self.shell_died(&window));
             }
             thread::sleep(POLL);
         }
@@ -563,10 +601,12 @@ fn remove_tree(path: &Path) {
     }
 }
 
-// No `-i`: that flag makes this bash exit before the hook runs. The pane is a
-// terminal, so the shell is interactive without it. The hook appends `$?`
-// before bash draws PS1, which is why the output wait follows the status line.
-const HOOK: &str = r#"
+// No `-i`: that flag makes bash exit before the hook runs. The pane is a
+// terminal, so the shell is interactive without it. The hook appends the
+// exit status before the prompt is drawn, which is why the output wait
+// follows the status line. zsh's `status` parameter is read-only, so the
+// hook stores the code under another name.
+const BASH_HOOK: &str = r#"
 PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"'
 PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
 PS2=
@@ -575,12 +615,30 @@ bind 'set enable-bracketed-paste on'
 unset HISTFILE
 "#;
 
+const ZSH_HOOK: &str = r#"
+precmd() {
+  local exit_status=$?
+  print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
+}
+PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
+PS2=
+unset RPS1
+unsetopt prompt_cr prompt_sp
+stty -echo
+unset HISTFILE
+setopt no_beep
+zle_highlight=(none)
+"#;
+
 const POLL: Duration = Duration::from_millis(30);
 
-fn shell_died(window: &str) -> Failure {
-    Failure::Report(format!(
-        "the bash shell in window {window} exited before the command finished\n"
-    ))
+impl Session {
+    fn shell_died(&self, window: &str) -> Failure {
+        Failure::Report(format!(
+            "the {} shell in window {window} exited before the command finished\n",
+            self.shell_name
+        ))
+    }
 }
 
 fn unique_suffix() -> String {
@@ -608,7 +666,8 @@ fn complete_lines(text: &str) -> Vec<&str> {
 }
 
 /// Output is the new log text with the prompt marker removed.
-/// Bash wraps a command in bracketed-paste mode switches; those are not output.
+/// The shell turns bracketed paste off before the command's output.
+/// zsh writes a clear sequence immediately before the marker.
 /// Carriage-return newline pairs become newlines. A lone carriage return stays.
 fn command_output(bytes: &[u8], marker: &str) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
@@ -623,21 +682,24 @@ fn command_output(bytes: &[u8], marker: &str) -> Option<String> {
     Some(strip_paste_mode(head).replace("\r\n", "\n"))
 }
 
-/// Drop the bracketed-paste switches bash writes around a command.
-/// The switches are a prefix and a suffix. A command that prints the same
-/// bytes in the middle keeps them.
+/// Drop the shell's bracketed-paste switches and zsh's prompt redraw.
+/// The off switch may follow command text zsh displayed. A command that
+/// prints the same bytes in the middle keeps them.
 fn strip_paste_mode(text: &str) -> &str {
     const OFF: &str = "\u{1b}[?2004l";
     const ON: &str = "\u{1b}[?2004h";
-    let Some(after_off) = text.strip_prefix(OFF) else {
-        return text.strip_suffix(ON).unwrap_or(text);
+    const CLEAR: &str = "\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J";
+    let after_off = if let Some(index) = text.find(OFF) {
+        let rest = &text[index + OFF.len()..];
+        rest.strip_prefix("\r\r\n")
+            .or_else(|| rest.strip_prefix("\r\n"))
+            .or_else(|| rest.strip_prefix('\n'))
+            .unwrap_or(rest)
+    } else {
+        text
     };
-    let after_off = after_off
-        .strip_prefix("\r\r\n")
-        .or_else(|| after_off.strip_prefix("\r\n"))
-        .or_else(|| after_off.strip_prefix('\n'))
-        .unwrap_or(after_off);
-    after_off.strip_suffix(ON).unwrap_or(after_off)
+    let trimmed = after_off.strip_suffix(ON).unwrap_or(after_off);
+    trimmed.strip_suffix(CLEAR).unwrap_or(trimmed)
 }
 
 fn write_transcript(path: &Path, entries: &[Entry]) -> Result<(), Failure> {
@@ -736,6 +798,22 @@ mod tests {
         assert_eq!(command_output(wrapped, "MARKER").as_deref(), Some("hi\n"));
         let quiet = b"\x1b[?2004l\r\r\n\x1b[?2004h\r\nMARKER\r\n";
         assert_eq!(command_output(quiet, "MARKER").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn command_output_drops_the_zsh_prompt_redraw() {
+        let hi =
+            "echo hi\u{1b}[?2004l\r\r\nhi\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        assert_eq!(command_output(hi.as_bytes(), "MARKER").as_deref(), Some("hi\n"));
+        let quiet = "false\u{1b}[?2004l\r\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        assert_eq!(command_output(quiet.as_bytes(), "MARKER").as_deref(), Some(""));
+        let lines = "echo one\r\r\necho two\u{1b}[K\u{1b}[?2004l\r\r\none\r\ntwo\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        assert_eq!(command_output(lines.as_bytes(), "MARKER").as_deref(), Some("one\ntwo\n"));
+        let colour = "printf\u{1b}[?2004l\r\r\n\u{1b}[31mred\u{1b}[0m\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        assert_eq!(
+            command_output(colour.as_bytes(), "MARKER").as_deref(),
+            Some("\u{1b}[31mred\u{1b}[0m\n")
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `tutorial-stepper play --auto` on a one-window bash tutorial.
+//! `tutorial-stepper play --auto` on the shells a tutorial declares.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -388,13 +388,14 @@ fn a_broken_tutorial_prints_the_same_problems_and_writes_no_transcript() {
 }
 
 #[test]
-fn zsh_a_setup_script_and_a_setting_are_refused() {
+fn a_setup_script_and_a_setting_are_refused() {
     let zsh = manifest_dir().join("examples/if");
     let zsh_transcript = temp_tutorial("zsh-transcript").join("transcript.toml");
     let (output, pid) = play(&zsh, &zsh_transcript);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
     let err = text(&output.stderr);
-    assert!(err.contains("bash") && err.contains("zsh"), "{err}");
+    assert!(err.contains("setup.sh"), "{err}");
+    assert!(!err.contains("declares zsh"), "{err}");
     assert!(!zsh_transcript.exists());
     server_is_gone(pid);
 
@@ -443,6 +444,286 @@ values = [\"external\", \"internal\"]
     assert!(err.contains("setting"), "{err}");
     assert!(!setting_transcript.exists());
     server_is_gone(pid);
+}
+
+#[test]
+fn a_zsh_tutorial_records_the_command_its_output_and_its_status() {
+    let root = copy_with_shell("one-window", "zsh");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert!(output.stderr.is_empty(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the one command");
+    assert_eq!(string_field(command, "page"), "welcome.md");
+    assert_eq!(string_field(command, "window"), "bob");
+    assert_eq!(block_field(command), 1);
+    assert_eq!(string_field(command, "command"), "echo hi\n");
+    assert_eq!(status_field(command), 0);
+    assert_eq!(string_field(command, "output"), "hi\n");
+    let start = string_field(command, "start");
+    let end = string_field(command, "end");
+    assert!(start <= end, "start {start} is after end {end}");
+    assert_eq!(start.len(), 30, "{start}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_zsh_command_of_several_lines_is_one_entry() {
+    let root = copy_with_shell("continued", "zsh");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the continued command");
+    assert_eq!(string_field(command, "command"), "echo hello \\\nworld\n");
+    assert_eq!(status_field(command), 0);
+    assert_eq!(string_field(command, "output"), "hello world\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_zsh_status_that_does_not_match_names_the_command() {
+    let root = copy_with_shell("status", "zsh");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("echo not yet"), "{err}");
+    assert!(err.contains("expected 19"), "{err}");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    assert_eq!(status_field(commands.get(0).expect("the command")), 0);
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_explicit_bash_shell_plays() {
+    let root = copy_with_shell("one-window", "bash");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(string_field(commands.get(0).expect("the command"), "output"), "hi\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_missing_zsh_is_named() {
+    let root = copy_with_shell("one-window", "zsh");
+    let tmux = program_on_path("tmux");
+    let only_tmux = temp_tutorial("path-tmux-no-zsh");
+    fs::create_dir_all(&only_tmux).expect("a directory");
+    std::os::unix::fs::symlink(&tmux, only_tmux.join("tmux")).expect("a tmux link");
+    let transcript = only_tmux.join("transcript.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .args(["play", "--auto", "--transcript"])
+        .arg(&transcript)
+        .arg(&root)
+        .env("PATH", &only_tmux)
+        .output()
+        .expect("play runs");
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("zsh is not on PATH"), "{}", text(&output.stderr));
+    assert!(!transcript.exists());
+}
+
+#[test]
+fn a_zsh_tutorial_does_not_need_bash() {
+    let root = copy_with_shell("one-window", "zsh");
+    // bash is absent. cat appends the pane log, and the hook calls stty.
+    let path = temp_tutorial("path-zsh");
+    fs::create_dir_all(&path).expect("a directory");
+    for name in ["tmux", "zsh", "cat", "stty"] {
+        let program = program_on_path(name);
+        std::os::unix::fs::symlink(&program, path.join(name)).expect("a program link");
+    }
+    assert!(!path.join("bash").exists());
+    let transcript = path.join("transcript.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .args(["play", "--auto", "--transcript"])
+        .arg(&transcript)
+        .arg(&root)
+        .env("PATH", &path)
+        .output()
+        .expect("play runs");
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(string_field(commands.get(0).expect("the command"), "output"), "hi\n");
+}
+
+#[test]
+fn every_valid_example_plays_under_bash_and_zsh() {
+    let expected = [
+        "one-window",
+        "status",
+        "mode",
+        "if",
+        "continued",
+        "declared-status",
+        "slow",
+        "two-windows",
+        "setup",
+        "needs-missing",
+    ];
+    let mut seen = expected.to_vec();
+    seen.sort_unstable();
+    let mut found = Vec::new();
+    for entry in fs::read_dir(manifest_dir().join("examples")).expect("the example directory") {
+        let entry = entry.expect("an example directory entry");
+        if entry.file_type().expect("a file type").is_dir() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name != "invalid" {
+                found.push(name);
+            }
+        }
+    }
+    found.sort();
+    assert_eq!(found, seen, "every valid example is played under both shells");
+
+    for name in expected {
+        let bash = snapshot(name, "bash");
+        let zsh = snapshot(name, "zsh");
+        assert_eq!(bash.code, zsh.code, "{name} exit {:?} vs {:?}", bash.code, zsh.code);
+        assert_eq!(bash.stdout, zsh.stdout, "{name} stdout");
+        assert_eq!(bash.entries, zsh.entries, "{name} transcript");
+        match name {
+            "status" => {
+                assert!(bash.stderr.contains("echo not yet"), "{}", bash.stderr);
+                assert!(zsh.stderr.contains("echo not yet"), "{}", zsh.stderr);
+                assert!(bash.stderr.contains("expected 19") && zsh.stderr.contains("expected 19"));
+            }
+            "needs-missing" => {
+                for stderr in [&bash.stderr, &zsh.stderr] {
+                    assert!(stderr.contains("tutorial-stepper-missing-program"), "{stderr}");
+                    assert!(stderr.contains("not found"), "{stderr}");
+                }
+            }
+            "if" => {
+                assert!(bash.stderr.contains("setup.sh"), "{}", bash.stderr);
+                assert!(zsh.stderr.contains("setup.sh"), "{}", zsh.stderr);
+            }
+            "slow" => {
+                assert!(bash.elapsed >= 120, "{name} bash ended after {} seconds", bash.elapsed);
+                assert!(zsh.elapsed >= 120, "{name} zsh ended after {} seconds", zsh.elapsed);
+            }
+            _ => {
+                assert!(bash.stderr.is_empty(), "{name} bash stderr:\n{}", bash.stderr);
+                assert!(zsh.stderr.is_empty(), "{name} zsh stderr:\n{}", zsh.stderr);
+            }
+        }
+    }
+}
+
+struct Snapshot {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    entries: Vec<(String, String, i64, String, i64, String)>,
+    elapsed: i64,
+}
+
+fn snapshot(name: &str, shell: &str) -> Snapshot {
+    let root = copy_with_shell(name, shell);
+    let transcript = root.join("transcript.toml");
+    let args = if name == "setup" { vec!["--run-setup".to_string()] } else { Vec::new() };
+    let (output, pid) = play_with(&root, &transcript, &args);
+    let entries = if transcript.exists() {
+        transcript_commands(&transcript)
+            .iter()
+            .map(|command| {
+                (
+                    string_field(command, "page"),
+                    string_field(command, "window"),
+                    block_field(command),
+                    string_field(command, "command"),
+                    status_field(command),
+                    comparable_output(&string_field(command, "output")),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let elapsed = if name == "slow" && transcript.exists() {
+        let commands = transcript_commands(&transcript);
+        let command = commands.get(0).expect("the sleep");
+        epoch_seconds(&string_field(command, "end"))
+            - epoch_seconds(&string_field(command, "start"))
+    } else {
+        0
+    };
+    server_is_gone(pid);
+    Snapshot {
+        code: output.status.code(),
+        stdout: text(&output.stdout),
+        stderr: text(&output.stderr),
+        entries,
+        elapsed,
+    }
+}
+
+fn comparable_output(output: &str) -> String {
+    let mut lines = Vec::new();
+    for line in output.lines() {
+        if let Some(stripped) = line.strip_prefix('/') {
+            lines.push(stripped.rsplit('/').next().unwrap_or(stripped).to_string());
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut text = lines.join("\n");
+    if output.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+fn copy_with_shell(name: &str, shell: &str) -> PathBuf {
+    let source = manifest_dir().join("examples").join(name);
+    let root = temp_tutorial(&format!("{name}-{shell}"));
+    copy_dir(&source, &root);
+    force_shell(&root, shell);
+    root
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("the copy directory");
+    for entry in fs::read_dir(from).expect("the example can be read") {
+        let entry = entry.expect("an example entry");
+        let dest = to.join(entry.file_name());
+        if entry.file_type().expect("a file type").is_dir() {
+            copy_dir(&entry.path(), &dest);
+        } else {
+            fs::copy(entry.path(), &dest).expect("the example file is copied");
+        }
+    }
+}
+
+fn force_shell(root: &Path, shell: &str) {
+    let path = root.join("tutorial.toml");
+    let text = fs::read_to_string(&path).expect("the index can be read");
+    let assignment = format!("shell = \"{shell}\"");
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if let Some(line) = lines.iter_mut().find(|line| line.starts_with("shell ")) {
+        *line = assignment;
+    } else {
+        lines.insert(0, assignment);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    fs::write(path, out).expect("the index is written");
 }
 
 #[test]
