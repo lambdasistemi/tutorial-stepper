@@ -527,6 +527,219 @@ folder = \"bob\"
 }
 
 #[test]
+fn a_setup_script_without_run_setup_does_not_run() {
+    let root = temp_tutorial("setup-not-run");
+    write_tutorial(
+        &root,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    fs::write(root.join("setup.sh"), "printf ran > marker\n").expect("the set-up script");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("setup.sh"), "{err}");
+    assert!(!transcript.exists(), "a refused run wrote a transcript");
+    assert!(!root.join("marker").exists(), "the set-up script ran");
+    server_is_gone(pid);
+}
+
+#[test]
+fn run_setup_runs_the_script_before_any_command() {
+    let root = temp_tutorial("setup-runs");
+    write_tutorial(
+        &root,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "\
+```bash { window=alice }
+cat who
+cat where
+```
+
+```bash { window=bob }
+cat marker
+```
+",
+    );
+    fs::write(
+        root.join("setup.sh"),
+        "\
+id -u > alice/who
+pwd > alice/where
+printf 'from-setup\\n' > bob/marker
+echo noise
+",
+    )
+    .expect("the set-up script");
+    let run = temp_tutorial("setup-runs-dir");
+    fs::create_dir_all(&run).expect("an empty run directory");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(
+        &root,
+        &transcript,
+        &["--run".to_string(), run.display().to_string(), "--run-setup".to_string()],
+    );
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "2 commands played\n");
+    assert!(output.stderr.is_empty(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    let alice = string_field(commands.get(0).expect("alice"), "output");
+    let uid = Command::new("id").arg("-u").output().expect("id runs");
+    assert!(uid.status.success(), "{}", text(&uid.stderr));
+    let uid = text(&uid.stdout);
+    assert!(alice.contains(uid.trim()), "alice output {alice:?} does not name user {uid:?}");
+    assert!(
+        alice.contains(&run.display().to_string()),
+        "the script's working directory was not the run folder: {alice:?}"
+    );
+    assert_eq!(string_field(commands.get(0).expect("alice"), "window"), "alice");
+    let bob = string_field(commands.get(1).expect("bob"), "output");
+    assert_eq!(bob, "from-setup\n");
+    assert_eq!(string_field(commands.get(1).expect("bob"), "window"), "bob");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_setup_script_that_fails_stops_before_any_command() {
+    let root = temp_tutorial("setup-fails");
+    write_tutorial(
+        &root,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+",
+        "```bash { window=alice }\nprintf played > played\n```\n",
+    );
+    fs::write(root.join("setup.sh"), "exit 7\n").expect("the set-up script");
+    let run = temp_tutorial("setup-fails-dir");
+    fs::create_dir_all(&run).expect("an empty run directory");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(
+        &root,
+        &transcript,
+        &["--run".to_string(), run.display().to_string(), "--run-setup".to_string()],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("setup.sh"), "{err}");
+    assert!(err.contains("exited 7"), "{err}");
+    assert!(!transcript.exists(), "a failed set-up script wrote a transcript");
+    assert!(!run.join("alice").join("played").exists(), "a page command ran");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_missing_setup_script_is_named() {
+    let root = temp_tutorial("setup-missing");
+    write_tutorial(
+        &root,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(&root, &transcript, &["--run-setup".to_string()]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("setup.sh"), "{err}");
+    assert!(err.contains("not a file"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn examples_setup_prepares_both_windows() {
+    let root = manifest_dir().join("examples/setup");
+    let run = temp_tutorial("examples-setup-run");
+    fs::create_dir_all(&run).expect("an empty run directory");
+    let transcript = temp_tutorial("examples-setup-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play_with(
+        &root,
+        &transcript,
+        &["--run".to_string(), run.display().to_string(), "--run-setup".to_string()],
+    );
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "2 commands played\n");
+    let commands = transcript_commands(&transcript);
+    let alice = string_field(commands.get(0).expect("alice"), "output");
+    let bob = string_field(commands.get(1).expect("bob"), "output");
+    assert!(alice.contains(&run.join("alice").display().to_string()), "{alice}");
+    assert!(alice.contains("prepared\n"), "{alice}");
+    assert_eq!(string_field(commands.get(0).expect("alice"), "window"), "alice");
+    assert!(bob.contains(&run.join("bob").display().to_string()), "{bob}");
+    assert!(bob.contains("prepared\n"), "{bob}");
+    assert_eq!(string_field(commands.get(1).expect("bob"), "window"), "bob");
+    assert!(run.join("alice").join("ready").is_file());
+    assert!(run.join("bob").join("ready").is_file());
+    server_is_gone(pid);
+}
+
+#[test]
+fn run_setup_without_a_script_changes_nothing() {
+    let root = temp_tutorial("setup-absent");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(&root, &transcript, &["--run-setup".to_string()]);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    assert_eq!(
+        string_field(transcript_commands(&transcript).get(0).expect("echo"), "output"),
+        "hi\n"
+    );
+    server_is_gone(pid);
+}
+
+#[test]
 fn the_shell_starts_in_the_window_folder() {
     let root = temp_tutorial("window-folder");
     write_tutorial(

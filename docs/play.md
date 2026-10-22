@@ -23,7 +23,7 @@ flowchart TD
   hook --> stop
 ```
 
-A format problem, zsh, a set-up script, or a command marked with a setting is refused before a shell starts. The transcript file is not created. Anything else reaches the shell.
+A format problem, zsh, a set-up script the author did not ask to run, or a command marked with a setting is refused before a shell starts. The transcript file is not created. Anything else reaches the shell.
 
 ## What runs
 
@@ -33,14 +33,18 @@ tutorial-stepper play --auto examples/one-window --transcript transcript.toml
 
 `--auto` and `--transcript` are both required. A sound run prints `1 command played` or `N commands played` on standard output, leaves standard error empty, and exits 0.
 
-The stepper looks up `tmux` on `PATH`, then `bash`. The first one missing is named, and nothing is started. The server uses its own socket and does not read a tmux configuration file. Each declared window is one bash shell, started in that window's folder under the run folder. Without `--run` the run folder is temporary and is removed when the run ends. `--run DIR` keeps that directory: a missing `DIR` is created, an empty directory is used, and a directory that already holds anything is refused without being changed. A `DIR` that is a file is refused. The shell loads the stepper's prompt hook. The hook reports that shell's command end and its exit status. The stepper does not decide that a command ended by a deadline or by reading the output: a command that sleeps is waited out. The server is gone when the run ends, whether the run passed or failed.
+The stepper looks up `tmux` on `PATH`, then `bash`. The first one missing is named, and nothing is started. The server uses its own socket and does not read a tmux configuration file. Each declared window is one bash shell, started in that window's folder under the run folder. Without `--run` the run folder is temporary and is removed when the run ends. `--run DIR` keeps that directory: a missing `DIR` is created, an empty directory is used, and a directory that already holds anything is refused without being changed. A `DIR` that is a file is refused.
+
+When the index names a set-up script, it runs only with `--run-setup`. The script is `bash` on that file, in the run folder, after each window folder exists and before any page command. It runs as the user who started `play`. The stepper does not raise privileges and does not invoke `sudo` or `su`. On success the script's own output is discarded, and the confirmation stays the count of page commands. A script that exits with another status stops the run: the message names the script and that status, and no page command runs. A script path that is not a file is named, and nothing is typed. Without `--run-setup` the run stops before any command and names the script. `--run-setup` on a tutorial that names no script changes nothing.
+
+The shell loads the stepper's prompt hook. The hook reports that shell's command end and its exit status. The stepper does not decide that a command ended by a deadline or by reading the output: a command that sleeps is waited out. The server is gone when the run ends, whether the run passed or failed.
 
 Commands run in index page order, then fence order. A command marked `window=NAME` runs in that window. A command that names no window runs in the window of the previous command, and the first such command runs in the first window the index declares. A block marked `mode=show` or `mode=observe` is not run and does not change that window. A directory change stays in the shell that ran it. A fence body is one command, including a command continued over several lines. A fence with no braces is not run and does not appear in the transcript. An absent `status` expects 0. The first command whose reported status differs is the last one recorded. Later commands are not run. Standard output is empty. Standard error names the page, the line, the command, the status the shell reported, and the status the block declared, as `FILE:LINE: message`. The command exits 1.
 
 A tutorial that `tutorial-stepper check` rejects prints the same problems and creates no transcript. The same is true of a tutorial this command refuses before starting a shell:
 
 - The tutorial declares zsh. This command runs bash.
-- The tutorial declares a set-up script. The message names the script. The script is not run.
+- The tutorial declares a set-up script and `--run-setup` was not given. The message names the script. The script is not run.
 - A command is marked `if=`. This command does not choose a setting. The message names that block.
 
 ## The transcript

@@ -27,10 +27,10 @@ Test first. The binary is the subject.
 
 ## Phase 4: The set-up script
 
-- [ ] A failing test that without `--run-setup` the run stops, names the script, writes no transcript, and does not run the script.
-- [ ] A failing test that `--run-setup` runs the script in the run folder before any command, that a command can read a file the script wrote, and that the script's user id is the id of the user who started `play`.
-- [ ] A failing test that a script that exits non-zero stops the run, names the script and the status, and runs no page command.
-- [ ] `examples/setup` is that tutorial. `docs/play.md` describes `--run-setup` in the same commit.
+- [x] A failing test that without `--run-setup` the run stops, names the script, writes no transcript, and does not run the script.
+- [x] A failing test that `--run-setup` runs the script in the run folder before any command, that a command can read a file the script wrote, and that the script's user id is the id of the user who started `play`.
+- [x] A failing test that a script that exits non-zero stops the run, names the script and the status, and runs no page command.
+- [x] `examples/setup` is that tutorial. `docs/play.md` describes `--run-setup` in the same commit.
 
 ## Phase 5: The needs check
 

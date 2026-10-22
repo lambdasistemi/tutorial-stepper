@@ -59,7 +59,7 @@ values = { SIGNING = "internal" }
 
 `shell` is `bash` or `zsh`. When it is absent, the shell is bash. `setup` is a relative path to the set-up script. Each window has a `name`, a `folder` relative to the run folder, and `needs`: a program name, or a program name followed by `>=` and a version. A setting has a name, a default, and the values allowed; the default is one of those values. A path is one tested combination: a name, and one allowed value for every setting. Names and setting values are single words.
 
-`check` parses `needs` and `setup` and checks that shape. It does not run the script and it does not look up the programs.
+`check` parses `needs` and `setup` and checks that shape. It does not run the script and it does not look up the programs. `play` runs the set-up script only with `--run-setup`, in the run folder, before the first page, as the user who started it.
 
 A key the format does not define is an error at that key's line. So is a page that is listed but missing, a Markdown page in the directory that is not listed, a setting whose default is not allowed, a path that misses a setting or names an unknown one or gives a value that is not allowed, and a second window, setting, or path with a name already used.
 

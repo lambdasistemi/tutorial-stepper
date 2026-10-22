@@ -1,7 +1,7 @@
 //! Read a tutorial directory, report format problems, and print its commands.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::index::{self, Problem};
 
@@ -31,12 +31,12 @@ pub(crate) fn script(dir: &Path) -> u8 {
 }
 
 /// Play a bash tutorial in the windows it declares. The value is the process exit code.
-pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>) -> u8 {
+pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup: bool) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
     };
-    if let Some(problem) = refuse_scope(&loaded) {
+    if let Some(problem) = refuse_scope(&loaded, run_setup) {
         emit(dir, &problem);
         return 1;
     }
@@ -51,7 +51,13 @@ pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>) -> u8 {
         .iter()
         .map(|window| (window.name.clone(), window.folder.clone()))
         .collect::<Vec<_>>();
-    match crate::play::drive(transcript, &loaded.play_commands, &windows, run) {
+    let setup = if run_setup {
+        loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
+    } else {
+        None
+    };
+    let setup = setup.as_ref().map(|(name, path)| (name.as_str(), path.as_path()));
+    match crate::play::drive(transcript, &loaded.play_commands, &windows, run, setup) {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -349,7 +355,15 @@ fn run_directory_problem(path: &Path) -> Option<String> {
     }
 }
 
-fn refuse_scope(loaded: &Loaded) -> Option<Problem> {
+fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
+    let joined = dir.join(relative);
+    if joined.is_absolute() {
+        return joined;
+    }
+    std::env::current_dir().map(|cwd| cwd.join(joined)).unwrap_or(dir.join(relative))
+}
+
+fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
     if matches!(loaded.shell, index::Shell::Zsh) {
         return Some(Problem {
             relative: "tutorial.toml".to_string(),
@@ -357,12 +371,14 @@ fn refuse_scope(loaded: &Loaded) -> Option<Problem> {
             message: "play --auto runs bash; this tutorial declares zsh".to_string(),
         });
     }
-    if let Some((path, line)) = &loaded.setup {
-        return Some(Problem {
-            relative: "tutorial.toml".to_string(),
-            line: *line,
-            message: format!("play stops before the set-up script {path}"),
-        });
+    if !run_setup {
+        if let Some((path, line)) = &loaded.setup {
+            return Some(Problem {
+                relative: "tutorial.toml".to_string(),
+                line: *line,
+                message: format!("play stops before the set-up script {path}"),
+            });
+        }
     }
     if let Some(command) = loaded.play_commands.iter().find(|command| command.chooses_setting) {
         return Some(Problem {

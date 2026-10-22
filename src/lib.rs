@@ -38,8 +38,8 @@ pub fn run() -> u8 {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
             Command::Script { dir } => script(&dir),
-            Command::Play { auto: _, dir, transcript, run } => {
-                play(&dir, &transcript, run.as_deref())
+            Command::Play { auto: _, dir, transcript, run, run_setup } => {
+                play(&dir, &transcript, run.as_deref(), run_setup)
             }
         },
         Err(err) => {
@@ -105,6 +105,9 @@ enum Command {
         /// Directory that keeps each window's folder. Removed at the end when absent.
         #[arg(long, value_name = "DIR")]
         run: Option<PathBuf>,
+        /// Run the declared set-up script before the first page.
+        #[arg(long)]
+        run_setup: bool,
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
@@ -118,6 +121,11 @@ fn script(dir: &std::path::Path) -> u8 {
     tutorial::script(dir)
 }
 
-fn play(dir: &std::path::Path, transcript: &std::path::Path, run: Option<&std::path::Path>) -> u8 {
-    tutorial::play(dir, transcript, run)
+fn play(
+    dir: &std::path::Path,
+    transcript: &std::path::Path,
+    run: Option<&std::path::Path>,
+    run_setup: bool,
+) -> u8 {
+    tutorial::play(dir, transcript, run, run_setup)
 }

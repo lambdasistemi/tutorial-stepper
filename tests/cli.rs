@@ -115,6 +115,7 @@ fn play_help_describes_that_command_only() {
     assert!(text.contains("--auto"), "play help did not name --auto:\n{text}");
     assert!(text.contains("--transcript"), "play help did not name --transcript:\n{text}");
     assert!(text.contains("--run"), "play help did not name --run:\n{text}");
+    assert!(text.contains("--run-setup"), "play help did not name --run-setup:\n{text}");
     assert!(text.contains("<DIR>"), "play help did not name the directory:\n{text}");
     assert!(text.contains("<FILE>"), "play help did not name the transcript file:\n{text}");
     assert!(

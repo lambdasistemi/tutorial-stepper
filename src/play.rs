@@ -68,6 +68,7 @@ pub(crate) fn drive(
     commands: &[PlayCommand],
     windows: &[(String, String)],
     run: Option<&Path>,
+    setup: Option<(&str, &Path)>,
 ) -> Result<usize, Failure> {
     if windows.is_empty() {
         return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
@@ -76,8 +77,36 @@ pub(crate) fn drive(
     let bash = require_program("bash")?;
     ensure_transcript_directory(transcript)?;
     let mut session = Session::prepare(tmux, windows, run)?;
+    if let Some((name, script)) = setup {
+        run_setup(&bash, &session.run_dir, name, script)?;
+    }
     session.start(&bash)?;
     session.run(commands, transcript)
+}
+
+/// Run the set-up script in the run folder, as the user who started play.
+fn run_setup(bash: &Path, run_dir: &Path, name: &str, script: &Path) -> Result<(), Failure> {
+    if !script.is_file() {
+        return Err(Failure::Report(format!("the set-up script {name} is not a file\n")));
+    }
+    let output = Command::new(bash)
+        .arg(script)
+        .current_dir(run_dir)
+        .env_remove("TMUX")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| {
+            Failure::Report(format!("cannot run the set-up script {name}: {error}\n"))
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let status = output
+        .status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "no status".to_string());
+    Err(Failure::Report(format!("the set-up script {name} exited {status}\n")))
 }
 
 fn require_program(name: &str) -> Result<PathBuf, Failure> {
