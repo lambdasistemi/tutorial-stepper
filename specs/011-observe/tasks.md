@@ -24,9 +24,9 @@ Test first. The binary, a real shell, and the transcript are the subject.
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then `play --auto examples/observe`, and `play --auto examples/observe-gone`.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then `play --auto examples/observe`, and `play --auto examples/observe-gone`.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
