@@ -26,9 +26,9 @@ Independent of the index file. Test first.
 - [ ] A failing test for an unknown attribute, and for a `status` or `mode` value outside the format.
 - [ ] The smallest parser that makes those tests pass. A language with no braces stays an ordinary code block.
 
-## Phase 4: The index and `check` (blocked on the operator)
+## Phase 4: The index and `check`
 
-Not started until the index file's name and syntax are decided.
+The operator chose `tutorial.toml`. The specification records the contents.
 
 - [ ] A failing test per index rule: a window that is not declared, a page the index does not list, an index entry whose file is missing, an `if` naming an undeclared setting.
 - [ ] The index parser for the decided file, and `tutorial-stepper check DIR` printing the confirmation or `FILE:LINE: message`.

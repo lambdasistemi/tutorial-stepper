@@ -7,7 +7,7 @@
 
 Ship the repository's first binary. `tutorial-stepper check DIR` reads a tutorial and reports format problems as `FILE:LINE: message`, exiting 0 only when the tutorial matches version 0. The binary is a Rust crate built by a Nix flake. Continuous integration on the NixOS runners replaces the placeholder workflow: a build gate, then rustfmt, clippy with warnings as errors, and the tests. release-please opens release pull requests with a token minted from the organisation app, and a release attaches the Linux x86_64 binary and its checksum. `docs/format.md` is version 0 of the format and lands in the same change as the check that enforces it.
 
-The index file's name and syntax are proposed in the specification and are not implemented until the operator chooses.
+The index file is `tutorial.toml`, as the operator decided. The specification records its contents.
 
 ## Technical Context
 
@@ -84,9 +84,9 @@ release-please-config.json
 
 **Fence attributes, independent of the index.** A fence is located with pulldown-cmark so the line numbers are CommonMark's, not a private scanner's. The info string is accepted only as an optional language word plus an optional `{ key=value … }` group. JSON, bare `key=value` outside braces, and a leading `.lang` inside the braces are errors at that line. Unknown keys are errors. This parser and its tests do not read the index, so they can land before the operator answers.
 
-**The index parser waits.** Pages, declared windows, and declared settings are checked only after the operator picks the file name and the syntax. Until then, `check` is not claimed to meet the acceptance scenarios that mention the index.
+**The index parser reads `tutorial.toml`.** Top-level keys come first, then `[[window]]`, `[[setting]]`, and `[[path]]`. The check uses `pages`, window names, setting names and values, and paths. It checks the shape of `shell`, `setup`, and `needs`, and does not run them.
 
-**What `check` prints.** Success prints one line with the page count and the command count. Failure prints every problem as `FILE:LINE: message` and exits 1. A usage mistake exits 2 and names `check --help`. The file path is the directory argument joined with the page's path inside it.
+**What `check` prints.** Success prints one line, `<n> pages, <m> commands`, where a command is an attributed fence with no `mode`. Failure prints every problem as `FILE:LINE: message` and exits 1. A usage mistake exits 2 and names `check --help`. The file path is the directory argument joined with the page path or with `tutorial.toml`.
 
 **Identity.** The packaged binary prints `tutorial-stepper <version> (commit <commit>)`. The version is the crate version. The commit is the flake's source revision, or `unknown` on a bare developer build.
 
