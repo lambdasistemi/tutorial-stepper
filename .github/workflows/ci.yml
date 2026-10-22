@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-gate:
+    name: Build Gate
+    runs-on: nixos
+    steps:
+      - name: Stub CI
+        run: echo "CI stub, replaced by the real CI with the first code"
