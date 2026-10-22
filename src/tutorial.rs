@@ -20,12 +20,19 @@ pub(crate) fn check(dir: &Path) -> u8 {
 }
 
 /// Print the runnable commands as one bash script. The value is the process exit code.
-pub(crate) fn script(dir: &Path) -> u8 {
+/// `path` selects one tested path. Absent means every branch.
+pub(crate) fn script(dir: &Path, path: Option<&str>) -> u8 {
     match load(dir) {
-        Ok(loaded) => {
-            print!("{}", render(&loaded.blocks));
-            0
-        }
+        Ok(loaded) => match path_values(&loaded.paths, path) {
+            Ok(values) => {
+                print!("{}", render(&loaded.blocks, values.as_deref()));
+                0
+            }
+            Err(problem) => {
+                emit(dir, &problem);
+                1
+            }
+        },
         Err(problems) => refuse(dir, &problems),
     }
 }
@@ -120,12 +127,14 @@ struct Loaded {
     shell: index::Shell,
     setup: Option<(String, usize)>,
     windows: Vec<index::Window>,
+    paths: Vec<index::TestedPath>,
 }
 
 struct Block {
     page: String,
     window: Option<String>,
     body: String,
+    setting: Option<(String, String)>,
 }
 
 fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
@@ -166,7 +175,7 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         Err(problem) => return Err(vec![problem]),
     };
 
-    let index::Tutorial { pages, windows, settings, mut problems, shell, setup } = tutorial;
+    let index::Tutorial { pages, windows, settings, paths, mut problems, shell, setup } = tutorial;
     let mut read = Read {
         blocks: Vec::new(),
         play_commands: Vec::new(),
@@ -207,6 +216,7 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         shell,
         setup,
         windows,
+        paths,
     })
 }
 
@@ -300,14 +310,45 @@ fn read_page(
             page: page.path.clone(),
             window: fence.window.clone(),
             body: fence.body.clone(),
+            setting: fence.setting.clone(),
         });
     }
     commands
 }
 
-fn render(blocks: &[Block]) -> String {
+fn path_values(
+    paths: &[index::TestedPath],
+    path: Option<&str>,
+) -> Result<Option<Vec<(String, String)>>, Problem> {
+    let Some(name) = path else {
+        return Ok(None);
+    };
+    match paths.iter().find(|candidate| candidate.name == name) {
+        Some(found) => Ok(Some(found.values.clone())),
+        None => Err(Problem {
+            relative: "tutorial.toml".to_string(),
+            line: 1,
+            message: format!("path \"{name}\" is not a tested path"),
+        }),
+    }
+}
+
+fn belongs(setting: &Option<(String, String)>, values: Option<&[(String, String)]>) -> bool {
+    let Some(values) = values else {
+        return true;
+    };
+    match setting {
+        None => true,
+        Some((name, value)) => values.iter().any(|(key, chosen)| key == name && chosen == value),
+    }
+}
+
+fn render(blocks: &[Block], values: Option<&[(String, String)]>) -> String {
     let mut out = String::from("#!/usr/bin/env bash\n");
     for block in blocks {
+        if !belongs(&block.setting, values) {
+            continue;
+        }
         out.push('\n');
         match &block.window {
             Some(window) => {

@@ -97,6 +97,7 @@ fn script_help_describes_that_command_only() {
         text.contains("observation"),
         "script help did not say that an observation is included:\n{text}"
     );
+    assert!(text.contains("--path"), "script help did not name --path:\n{text}");
     assert!(
         text.contains("FILE:LINE: message"),
         "script help did not say how problems are printed:\n{text}"

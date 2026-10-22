@@ -12,12 +12,12 @@
 
 Test first. The binary is the subject.
 
-- [ ] A failing test that `script examples/if --path external` prints `echo external` and does not print `echo internal`, and that `--path internal` does the opposite.
-- [ ] A failing test that a shared block is printed with the matching branch and that the other branch is left out, including an observation, and that `mode=show` stays left out.
-- [ ] A failing test that `--path` of a name that is not a tested path exits 1, names the path, and prints nothing.
-- [ ] A failing test that a tutorial `check` rejects still prints those problems when `--path` is passed.
-- [ ] The smallest change that makes those tests pass. Without `--path`, every branch is still printed.
-- [ ] `docs/script.md` describes `--path` in the same commit. `script --help` names it and stays within the line limit.
+- [x] A failing test that `script examples/if --path external` prints `echo external` and does not print `echo internal`, and that `--path internal` does the opposite.
+- [x] A failing test that a shared block is printed with the matching branch and that the other branch is left out, including an observation, and that `mode=show` stays left out.
+- [x] A failing test that `--path` of a name that is not a tested path exits 1, names the path, and prints nothing.
+- [x] A failing test that a tutorial `check` rejects still prints those problems when `--path` is passed.
+- [x] The smallest change that makes those tests pass. Without `--path`, every branch is still printed.
+- [x] `docs/script.md` describes `--path` in the same commit. `script --help` names it and stays within the line limit.
 
 ## Phase 3: One path in the unattended run
 

@@ -38,10 +38,16 @@ pub(crate) struct Setting {
     pub values: Vec<String>,
 }
 
+pub(crate) struct TestedPath {
+    pub name: String,
+    pub values: Vec<(String, String)>,
+}
+
 pub(crate) struct Tutorial {
     pub pages: Vec<Page>,
     pub windows: Vec<Window>,
     pub settings: Vec<Setting>,
+    pub paths: Vec<TestedPath>,
     pub problems: Vec<Problem>,
     pub shell: Shell,
     pub setup: Option<(String, usize)>,
@@ -107,6 +113,16 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
     }
 
     check_paths(&raw_paths, &settings, &mut problems);
+    let paths = raw_paths
+        .iter()
+        .filter_map(|path| {
+            let values = path.values.as_ref()?;
+            Some(TestedPath {
+                name: path.name.clone(),
+                values: values.iter().map(|(key, value, _)| (key.clone(), value.clone())).collect(),
+            })
+        })
+        .collect();
     if !saw_pages {
         problems.push(index_problem(text, None, "pages must list at least one page".to_string()));
     }
@@ -118,7 +134,7 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
         ));
     }
 
-    Ok(Tutorial { pages, windows, settings, problems, shell, setup })
+    Ok(Tutorial { pages, windows, settings, paths, problems, shell, setup })
 }
 
 fn read_shell(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Option<Shell> {

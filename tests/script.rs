@@ -95,6 +95,152 @@ echo not yet
 }
 
 #[test]
+fn one_tested_path_prints_only_its_branch() {
+    let external = run([
+        OsStr::new("script"),
+        OsStr::new("--path"),
+        OsStr::new("external"),
+        manifest_dir().join("examples/if").as_os_str(),
+    ]);
+    assert!(external.status.success(), "stderr:\n{}", text(&external.stderr));
+    assert!(external.stderr.is_empty(), "stderr:\n{}", text(&external.stderr));
+    assert_eq!(
+        text(&external.stdout),
+        "\
+#!/usr/bin/env bash
+
+# sign.md, window alice
+echo external
+"
+    );
+
+    let internal = run([
+        OsStr::new("script"),
+        OsStr::new("--path"),
+        OsStr::new("internal"),
+        manifest_dir().join("examples/if").as_os_str(),
+    ]);
+    assert!(internal.status.success(), "stderr:\n{}", text(&internal.stderr));
+    assert_eq!(
+        text(&internal.stdout),
+        "\
+#!/usr/bin/env bash
+
+# sign.md, window alice
+echo internal
+"
+    );
+}
+
+#[test]
+fn a_shared_block_stays_and_the_other_branch_is_left_out() {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("script-one-path");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("the temporary tutorial directory");
+    fs::write(
+        root.join("tutorial.toml"),
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+
+[[path]]
+name = \"external\"
+values = { SIGNING = \"external\" }
+
+[[path]]
+name = \"internal\"
+values = { SIGNING = \"internal\" }
+",
+    )
+    .expect("the index is written");
+    fs::write(
+        root.join("welcome.md"),
+        "\
+```bash { window=bob mode=show if=SIGNING:external }
+echo shown
+```
+
+```bash { window=bob mode=observe if=SIGNING:external }
+echo look external
+```
+
+```bash { window=bob mode=observe if=SIGNING:internal }
+echo look internal
+```
+
+```bash { window=bob }
+echo shared
+```
+
+```bash { window=bob if=SIGNING:external }
+echo external
+```
+
+```bash { window=bob if=SIGNING:internal }
+echo internal
+```
+",
+    )
+    .expect("the page is written");
+
+    let output =
+        run([OsStr::new("script"), OsStr::new("--path"), OsStr::new("external"), root.as_os_str()]);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(
+        text(&output.stdout),
+        "\
+#!/usr/bin/env bash
+
+# welcome.md, window bob
+echo look external
+
+# welcome.md, window bob
+echo shared
+
+# welcome.md, window bob
+echo external
+"
+    );
+}
+
+#[test]
+fn an_unknown_path_names_itself_and_prints_nothing() {
+    let output = run([
+        OsStr::new("script"),
+        OsStr::new("--path"),
+        OsStr::new("nope"),
+        manifest_dir().join("examples/if").as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    let index = manifest_dir().join("examples/if/tutorial.toml");
+    assert_eq!(
+        text(&output.stderr),
+        format!("{}:1: path \"nope\" is not a tested path\n", index.display())
+    );
+}
+
+#[test]
+fn a_broken_tutorial_ignores_the_path_and_prints_the_check_problems() {
+    let dir = manifest_dir().join("examples/invalid/undeclared-setting");
+    let checked = run([OsStr::new("check"), dir.as_os_str()]);
+    let printed =
+        run([OsStr::new("script"), OsStr::new("--path"), OsStr::new("external"), dir.as_os_str()]);
+    assert!(!checked.status.success());
+    assert!(printed.stdout.is_empty(), "{}", text(&printed.stdout));
+    assert_eq!(printed.status.code(), checked.status.code());
+    assert_eq!(text(&printed.stderr), text(&checked.stderr));
+}
+
+#[test]
 fn both_setting_branches_are_printed_in_order() {
     let output = script("examples/if");
     assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));

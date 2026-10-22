@@ -37,7 +37,7 @@ pub fn run() -> u8 {
     match Cli::try_parse_from(argv) {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
-            Command::Script { dir } => script(&dir),
+            Command::Script { dir, path } => script(&dir, path.as_deref()),
             Command::Play { auto: _, dir, transcript, run, run_setup } => {
                 play(&dir, &transcript, run.as_deref(), run_setup)
             }
@@ -84,9 +84,12 @@ enum Command {
     /// Print the runnable commands as one bash script.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each runnable command is preceded by a comment naming its page and its window. A block marked mode=show is left out. An observation is included where it appears. A sound tutorial prints the script and exits 0. Each problem is printed as FILE:LINE: message and the command exits 1, with nothing on standard output. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper script examples/one-window"
+        after_help = "Each runnable command is preceded by a comment naming its page and its window. A block marked mode=show is left out. An observation is included where it appears. Without --path, every branch is printed. --path NAME prints the blocks of that tested path and leaves the other branches out. A sound tutorial prints the script and exits 0. Each problem is printed as FILE:LINE: message and the command exits 1, with nothing on standard output. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper script examples/one-window\n  tutorial-stepper script examples/if --path external"
     )]
     Script {
+        /// Tested path. Omit it to print every branch.
+        #[arg(long, value_name = "NAME")]
+        path: Option<String>,
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
@@ -117,8 +120,8 @@ fn check(dir: &std::path::Path) -> u8 {
     tutorial::check(dir)
 }
 
-fn script(dir: &std::path::Path) -> u8 {
-    tutorial::script(dir)
+fn script(dir: &std::path::Path, path: Option<&str>) -> u8 {
+    tutorial::script(dir, path)
 }
 
 fn play(

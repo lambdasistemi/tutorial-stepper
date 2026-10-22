@@ -1,6 +1,6 @@
 # Printing a tutorial as one script
 
-A tutorial author runs `tutorial-stepper script` on a tutorial directory and reads one bash script. Every runnable command is there, in the order of the pages, and the comment before it names its page and its window. The author can read the script, diff it, or run it outside the stepper. The command itself runs nothing.
+A tutorial author runs `tutorial-stepper script` on a tutorial directory and reads one bash script. Every runnable command is there, in the order of the pages, and the comment before it names its page and its window. `--path NAME` keeps one tested path and leaves the other branches out. The author can read the script, diff it, or run it outside the stepper. The command itself runs nothing.
 
 ## Who it is for
 
@@ -9,10 +9,12 @@ The author, who wants the commands without playing the tutorial. [paolino/runmd]
 ```mermaid
 flowchart TD
   directory["Tutorial directory"]
+  path["Optional tested path"]
   command["tutorial-stepper script"]
   script["Bash script, comment then command"]
   problems["File and line of each problem"]
   directory --> command
+  path --> command
   command --> script
   command --> problems
 ```
@@ -30,7 +32,18 @@ The page is the path listed in the index. The window is the `window` written on 
 
 A runnable block is a command, which is an attributed fence with no `mode`, or an observation, which is `mode=observe`. A block marked `mode=show` is left out. A fence with a language and no braces is an ordinary code block and is left out. The body of the fence is copied as written.
 
-Blocks marked `if=` are all printed, in the order they appear on the page. This command does not choose a setting or a tested path. The set-up script named by the index is not part of the printed script. The tutorial's `shell` is not consulted: the printed script is bash, which is what `bash -n` checks.
+Without `--path`, blocks marked `if=` are all printed, in the order they appear on the page. `--path NAME` prints one tested path. A block with no `if` is printed. A block whose `if=NAME:value` matches that path is printed. A block whose `if` names another value is left out. A block marked `mode=show` stays left out. An observation is printed only when it belongs to the path. A name that is not a tested path exits 1 and prints nothing. The message is `tutorial.toml:1: path "NAME" is not a tested path`.
+
+The set-up script named by the index is not part of the printed script. The tutorial's `shell` is not consulted: the printed script is bash, which is what `bash -n` checks.
+
+`examples/if` declares two tested paths. `tutorial-stepper script examples/if --path external` prints only the external command:
+
+```bash
+#!/usr/bin/env bash
+
+# sign.md, window alice
+echo external
+```
 
 The attributes themselves are specified in [Checking a tutorial's format](format.md).
 
