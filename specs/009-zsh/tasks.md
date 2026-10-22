@@ -29,9 +29,9 @@ Test first. The binary is the subject.
 
 ## Phase 4: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then `tutorial-stepper play --auto` on a zsh example, and on an example that must fail under zsh.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then `tutorial-stepper play --auto` on a zsh example, and on an example that must fail under zsh.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
