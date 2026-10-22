@@ -15,10 +15,15 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn play(dir: &Path, transcript: &Path) -> (Output, u32) {
-    let child = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
-        .args(["play", "--auto", "--transcript"])
-        .arg(transcript)
-        .arg(dir)
+    play_with(dir, transcript, &[])
+}
+
+fn play_with(dir: &Path, transcript: &Path, args: &[String]) -> (Output, u32) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"));
+    command.arg("play").arg("--auto").arg("--transcript").arg(transcript);
+    command.args(args);
+    command.arg(dir);
+    let child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -421,6 +426,103 @@ values = [\"external\", \"internal\"]
     let err = text(&output.stderr);
     assert!(err.contains("setting"), "{err}");
     assert!(!setting_transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn run_keeps_the_window_folder_and_a_second_play_is_refused() {
+    let root = temp_tutorial("kept-window");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\npwd\n```\n",
+    );
+    let run = temp_tutorial("kept-run");
+    fs::create_dir_all(&run).expect("an empty run directory");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    let got = string_field(commands.get(0).expect("pwd"), "output");
+    let folder = run.join("bob");
+    assert_eq!(got.trim(), folder.to_string_lossy());
+    assert!(folder.is_dir(), "the window folder was removed");
+    let mut names = fs::read_dir(&run)
+        .expect("the run directory")
+        .map(|entry| entry.expect("a run entry").file_name())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec![std::ffi::OsString::from("bob")]);
+    server_is_gone(pid);
+
+    let again = root.join("again.toml");
+    let marker = fs::read_dir(&run).expect("the run directory").count();
+    let (output, pid) = play_with(&root, &again, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("not empty"), "{err}");
+    assert!(err.contains(&run.display().to_string()), "{err}");
+    assert!(!again.exists(), "a refused run wrote a transcript");
+    assert_eq!(fs::read_dir(&run).expect("the run directory").count(), marker);
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_run_without_run_removes_the_window_folder() {
+    let root = temp_tutorial("removed-window");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\npwd\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    let got = string_field(commands.get(0).expect("pwd"), "output");
+    let folder = PathBuf::from(got.trim());
+    assert!(folder.ends_with("bob"), "{got}");
+    assert!(!folder.exists(), "the temporary window folder was kept at {got}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_run_path_that_is_a_file_is_refused() {
+    let root = temp_tutorial("run-file-tutorial");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let run = temp_tutorial("run-file");
+    fs::write(&run, "keep").expect("a file");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("not a directory"), "{err}");
+    assert_eq!(fs::read_to_string(&run).expect("the file"), "keep");
+    assert!(!transcript.exists());
     server_is_gone(pid);
 }
 

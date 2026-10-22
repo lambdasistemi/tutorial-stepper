@@ -31,7 +31,7 @@ pub(crate) fn script(dir: &Path) -> u8 {
 }
 
 /// Play a bash tutorial in the windows it declares. The value is the process exit code.
-pub(crate) fn play(dir: &Path, transcript: &Path) -> u8 {
+pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
@@ -40,12 +40,18 @@ pub(crate) fn play(dir: &Path, transcript: &Path) -> u8 {
         emit(dir, &problem);
         return 1;
     }
+    if let Some(path) = run {
+        if let Some(message) = run_directory_problem(path) {
+            eprint!("{message}");
+            return 1;
+        }
+    }
     let windows = loaded
         .windows
         .iter()
         .map(|window| (window.name.clone(), window.folder.clone()))
         .collect::<Vec<_>>();
-    match crate::play::drive(transcript, &loaded.play_commands, &windows) {
+    match crate::play::drive(transcript, &loaded.play_commands, &windows, run) {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -328,6 +334,19 @@ fn relative_name(dir: &Path, path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn run_directory_problem(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    if !path.is_dir() {
+        return Some(format!("{} is not a directory\n", path.display()));
+    }
+    match fs::read_dir(path) {
+        Ok(mut entries) => entries.next().map(|_| format!("{} is not empty\n", path.display())),
+        Err(error) => Some(format!("cannot read {}: {error}\n", path.display())),
+    }
 }
 
 fn refuse_scope(loaded: &Loaded) -> Option<Problem> {

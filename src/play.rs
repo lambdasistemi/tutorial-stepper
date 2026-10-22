@@ -54,6 +54,7 @@ struct Session {
     tmux: PathBuf,
     socket: String,
     run_dir: PathBuf,
+    keep_run: bool,
     control_dir: PathBuf,
     hook_path: PathBuf,
     panes: Vec<Pane>,
@@ -66,6 +67,7 @@ pub(crate) fn drive(
     transcript: &Path,
     commands: &[PlayCommand],
     windows: &[(String, String)],
+    run: Option<&Path>,
 ) -> Result<usize, Failure> {
     if windows.is_empty() {
         return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
@@ -73,7 +75,7 @@ pub(crate) fn drive(
     let tmux = require_program("tmux")?;
     let bash = require_program("bash")?;
     ensure_transcript_directory(transcript)?;
-    let mut session = Session::prepare(tmux, windows)?;
+    let mut session = Session::prepare(tmux, windows, run)?;
     session.start(&bash)?;
     session.run(commands, transcript)
 }
@@ -108,22 +110,34 @@ fn ensure_transcript_directory(transcript: &Path) -> Result<(), Failure> {
 }
 
 impl Session {
-    fn prepare(tmux: PathBuf, windows: &[(String, String)]) -> Result<Self, Failure> {
+    fn prepare(
+        tmux: PathBuf,
+        windows: &[(String, String)],
+        run: Option<&Path>,
+    ) -> Result<Self, Failure> {
         let suffix = unique_suffix();
-        let run_dir = std::env::temp_dir().join(format!("tutorial-stepper-run-{suffix}"));
+        let keep_run = run.is_some();
+        let run_dir = match run {
+            Some(path) => path.to_path_buf(),
+            None => std::env::temp_dir().join(format!("tutorial-stepper-run-{suffix}")),
+        };
         let control_dir = std::env::temp_dir().join(format!("tutorial-stepper-control-{suffix}"));
-        fs::create_dir_all(&run_dir).map_err(|error| {
-            Failure::Report(format!("cannot create the run directory: {error}\n"))
-        })?;
+        if let Err(error) = fs::create_dir_all(&run_dir) {
+            return Err(Failure::Report(format!("cannot create the run directory: {error}\n")));
+        }
         if let Err(error) = fs::create_dir_all(&control_dir) {
-            remove_tree(&run_dir);
+            if !keep_run {
+                remove_tree(&run_dir);
+            }
             return Err(Failure::Report(format!("cannot create the run directory: {error}\n")));
         }
         let mut panes = Vec::new();
         for (name, folder) in windows {
             let dir = run_dir.join(folder);
             if let Err(error) = fs::create_dir_all(&dir) {
-                remove_tree(&run_dir);
+                if !keep_run {
+                    remove_tree(&run_dir);
+                }
                 remove_tree(&control_dir);
                 return Err(Failure::Report(format!("cannot create the window folder: {error}\n")));
             }
@@ -141,6 +155,7 @@ impl Session {
             hook_path: control_dir.join("hook"),
             marker: format!("tutorial-stepper-prompt-{suffix}"),
             run_dir,
+            keep_run,
             control_dir,
             panes,
         })
@@ -411,7 +426,9 @@ impl Drop for Session {
             .stderr(Stdio::null())
             .status();
         remove_tree(&self.control_dir);
-        remove_tree(&self.run_dir);
+        if !self.keep_run {
+            remove_tree(&self.run_dir);
+        }
     }
 }
 

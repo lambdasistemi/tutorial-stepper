@@ -12,18 +12,18 @@
 
 Test first. The binary is the subject.
 
-- [ ] A failing test that `examples/two-windows` exits 0, that each command's transcript entry names its window, and that the working directory ends with that window's folder, including a command that names no window after one that named `bob`.
-- [ ] A failing test that a directory change in one window leaves the other window in its own folder.
-- [ ] `examples/one-window` and the issue 7 refusals for zsh and for `if=` still pass. The refusal of a second window is removed.
-- [ ] The smallest change that makes those tests pass. Each declared window is one bash shell.
-- [ ] `docs/play.md` describes several windows, in the same commit as the behaviour. The README no longer says that unattended play is one window only.
+- [x] A failing test that `examples/two-windows` exits 0, that each command's transcript entry names its window, and that the working directory ends with that window's folder, including a command that names no window after one that named `bob`.
+- [x] A failing test that a directory change in one window leaves the other window in its own folder.
+- [x] `examples/one-window` and the issue 7 refusals for zsh and for `if=` still pass. The refusal of a second window is removed.
+- [x] The smallest change that makes those tests pass. Each declared window is one bash shell.
+- [x] `docs/play.md` describes several windows, in the same commit as the behaviour. The README no longer says that unattended play is one window only.
 
 ## Phase 3: The run folder
 
-- [ ] A failing test that `--run DIR` on an empty directory keeps `DIR` and the window folder after the run, and that the transcript's working directory is inside `DIR`.
-- [ ] A failing test that a run without `--run` removes the working directory the transcript recorded.
-- [ ] A failing test that a non-empty `--run` directory is refused, unchanged, with no transcript and no server.
-- [ ] The smallest change that makes those tests pass. `play --help` describes `--run` and stays within the line limit.
+- [x] A failing test that `--run DIR` on an empty directory keeps `DIR` and the window folder after the run, and that the transcript's working directory is inside `DIR`.
+- [x] A failing test that a run without `--run` removes the working directory the transcript recorded.
+- [x] A failing test that a non-empty `--run` directory is refused, unchanged, with no transcript and no server.
+- [x] The smallest change that makes those tests pass. `play --help` describes `--run` and stays within the line limit.
 
 ## Phase 4: The set-up script
 
