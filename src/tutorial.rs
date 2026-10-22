@@ -32,6 +32,16 @@ pub(crate) fn script(dir: &Path) -> u8 {
 
 /// Play a bash tutorial in the windows it declares. The value is the process exit code.
 pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup: bool) -> u8 {
+    play_as(dir, transcript, run, run_setup, None)
+}
+
+fn play_as(
+    dir: &Path,
+    transcript: &Path,
+    run: Option<&Path>,
+    run_setup: bool,
+    user: Option<u32>,
+) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
@@ -39,6 +49,21 @@ pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup:
     if let Some(problem) = refuse_scope(&loaded, run_setup) {
         emit(dir, &problem);
         return 1;
+    }
+    if run_setup {
+        if let Some((name, _)) = &loaded.setup {
+            match supplied_user(user) {
+                Ok(0) => {
+                    eprint!("{}", setup_as_root_message(name));
+                    return 1;
+                }
+                Ok(_) => {}
+                Err(message) => {
+                    eprint!("{message}");
+                    return 1;
+                }
+            }
+        }
     }
     if let Some(message) = unmet_needs(&loaded) {
         eprint!("{message}");
@@ -359,6 +384,32 @@ fn run_directory_problem(path: &Path) -> Option<String> {
     }
 }
 
+fn setup_as_root_message(script: &str) -> String {
+    format!("play does not run the set-up script {script} as root\n")
+}
+
+fn supplied_user(user: Option<u32>) -> Result<u32, String> {
+    if let Some(user) = user {
+        return Ok(user);
+    }
+    current_user_id()
+}
+
+fn current_user_id() -> Result<u32, String> {
+    let output = std::process::Command::new("id")
+        .arg("-u")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("cannot read the user id: {error}\n"))?;
+    if !output.status.success() {
+        return Err("cannot read the user id\n".to_string());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "cannot read the user id\n".to_string())
+}
+
 fn unmet_needs(loaded: &Loaded) -> Option<String> {
     let needs = loaded
         .windows
@@ -445,4 +496,78 @@ fn emit(dir: &Path, problem: &Problem) {
     let path =
         if problem.relative.is_empty() { dir.to_path_buf() } else { dir.join(&problem.relative) };
     eprintln!("{}:{}: {}", path.display(), problem.line, problem.message);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::play_as;
+
+    fn temp(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("tutorial-stepper-{name}"));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn the_set_up_script_is_refused_when_the_user_is_root() {
+        let root = temp("root-setup");
+        fs::create_dir_all(&root).expect("the tutorial directory");
+        fs::write(
+            root.join("tutorial.toml"),
+            "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        )
+        .expect("the index");
+        fs::write(root.join("welcome.md"), "```bash { window=bob }\necho hi\n```\n")
+            .expect("the page");
+        let marker = root.join("marker");
+        fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
+            .expect("the set-up script");
+        let run = temp("root-setup-run");
+        let transcript = root.join("transcript.toml");
+        let code = play_as(&root, &transcript, Some(&run), true, Some(0));
+        assert_eq!(code, 1, "play ran the set-up script as root");
+        let message = super::setup_as_root_message("setup.sh");
+        assert!(message.contains("setup.sh"), "{message}");
+        assert!(message.contains("as root"), "{message}");
+        assert!(!marker.exists(), "the set-up script ran");
+        assert!(!transcript.exists(), "a refused run wrote a transcript");
+        assert!(!run.exists(), "a refused run created the run directory");
+    }
+
+    #[test]
+    fn a_set_up_script_still_runs_for_a_user_who_is_not_root() {
+        let root = temp("user-setup");
+        fs::create_dir_all(&root).expect("the tutorial directory");
+        fs::write(
+            root.join("tutorial.toml"),
+            "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        )
+        .expect("the index");
+        fs::write(root.join("welcome.md"), "```bash { window=bob }\necho hi\n```\n")
+            .expect("the page");
+        let marker = root.join("marker");
+        fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
+            .expect("the set-up script");
+        let transcript = root.join("transcript.toml");
+        let code = play_as(&root, &transcript, None, true, Some(1000));
+        assert_eq!(code, 0, "a non-root user was refused");
+        assert_eq!(fs::read_to_string(&marker).expect("the script wrote the marker"), "ran");
+    }
 }
