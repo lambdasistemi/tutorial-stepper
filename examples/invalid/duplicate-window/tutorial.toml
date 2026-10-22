@@ -1,0 +1,9 @@
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"
+
+[[window]]
+name = "bob"
+folder = "other"

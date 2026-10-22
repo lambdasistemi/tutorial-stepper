@@ -1,0 +1,5 @@
+pages = []
+
+[[window]]
+name = "bob"
+folder = "bob"

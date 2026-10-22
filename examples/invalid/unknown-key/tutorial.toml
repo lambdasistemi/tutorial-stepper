@@ -1,0 +1,6 @@
+theme = "dark"
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"

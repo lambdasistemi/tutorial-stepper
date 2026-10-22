@@ -14,8 +14,20 @@ let
   version = cargoToml.package.version;
   commit = self.rev or (self.dirtyRev or "unknown");
 
+  # cleanCargoSource drops Markdown. The example tutorials are the
+  # tests, so their pages have to stay in the source.
+  keepExamples = path: _type:
+    let
+      base = builtins.baseNameOf path;
+    in
+    base == "examples" || pkgs.lib.hasInfix "/examples/" path;
+
   commonArgs = {
-    src = craneLib.cleanCargoSource src;
+    src = pkgs.lib.cleanSourceWith {
+      src = src;
+      filter = path: type:
+        (craneLib.filterCargoSources path type) || (keepExamples path type);
+    };
     strictDeps = true;
     pname = "tutorial-stepper";
     inherit version;

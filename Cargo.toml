@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 pulldown-cmark = { version = "0.13.5", default-features = false }
+toml_edit = { version = "0.22", default-features = false, features = ["parse"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

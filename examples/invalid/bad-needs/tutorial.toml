@@ -1,0 +1,6 @@
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"
+needs = ["singular > 1"]

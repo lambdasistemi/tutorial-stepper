@@ -1,0 +1,6 @@
+setup = "/tmp/setup.sh"
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"

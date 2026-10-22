@@ -2,6 +2,9 @@
 
 pub mod fence;
 
+mod index;
+mod tutorial;
+
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -76,6 +79,5 @@ enum Command {
 }
 
 fn check(dir: &std::path::Path) -> u8 {
-    eprintln!("tutorial-stepper: cannot check {} yet", dir.display());
-    1
+    tutorial::check(dir)
 }

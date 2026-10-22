@@ -51,7 +51,9 @@ GitHub, Pandoc and MkDocs show this as an ordinary bash block.
 
 ## Status
 
-No code yet. The principles every change follows are in the
+`tutorial-stepper check` reads a tutorial directory and reports format problems.
+Version 0 of that format is [docs/format.md](docs/format.md). Playing a tutorial
+is not built yet. The principles every change follows are in the
 [constitution](.specify/memory/constitution.md). The first consumer is the
 [Singular demo](https://github.com/lambdasistemi/singular-demo), whose terminal tutorial this project
 replaces.

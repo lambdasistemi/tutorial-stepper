@@ -35,12 +35,15 @@ pub struct FenceError {
     pub message: String,
 }
 
-/// The attributed fences in a CommonMark page, in order.
+/// The attributed fences in a CommonMark page, in order, and every fence that
+/// is not an ordinary code block and not `lang { key=value }`.
 ///
-/// A fence with only a language is an ordinary code block and is left out.
-pub fn fence_attributes(markdown: &str) -> Result<Vec<AttributedFence>, FenceError> {
+/// A fence with only a language is left out. A later fence is still read when
+/// an earlier one is wrong.
+pub fn fence_attributes(markdown: &str) -> (Vec<AttributedFence>, Vec<FenceError>) {
     let parser = pulldown_cmark::Parser::new(markdown);
     let mut fences = Vec::new();
+    let mut errors = Vec::new();
     for (event, range) in parser.into_offset_iter() {
         let pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(kind)) = event else {
             continue;
@@ -49,11 +52,13 @@ pub fn fence_attributes(markdown: &str) -> Result<Vec<AttributedFence>, FenceErr
             continue;
         };
         let line = line_number(markdown, range.start);
-        if let Some(fence) = parse_info(&info, line)? {
-            fences.push(fence);
+        match parse_info(&info, line) {
+            Ok(Some(fence)) => fences.push(fence),
+            Ok(None) => {}
+            Err(error) => errors.push(error),
         }
     }
-    Ok(fences)
+    (fences, errors)
 }
 
 fn line_number(markdown: &str, offset: usize) -> usize {
@@ -183,7 +188,7 @@ fn word<'a>(line: usize, key: &str, value: &'a str) -> Result<&'a str, FenceErro
     }
 }
 
-fn is_word(value: &str) -> bool {
+pub(crate) fn is_word(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
@@ -196,7 +201,14 @@ fn malformed(line: usize) -> FenceError {
 
 #[cfg(test)]
 mod tests {
-    use super::{fence_attributes, Mode};
+    use super::{fence_attributes, FenceError, Mode};
+
+    fn only_error(markdown: &str) -> FenceError {
+        let (fences, errors) = fence_attributes(markdown);
+        assert!(fences.is_empty(), "{fences:?}");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        errors.into_iter().next().expect("the assertion above holds")
+    }
 
     #[test]
     fn reads_attributes_and_skips_an_ordinary_block() {
@@ -209,7 +221,8 @@ echo plain
 echo hi
 ```
 ";
-        let fences = fence_attributes(markdown).expect("the attribute spelling is valid");
+        let (fences, errors) = fence_attributes(markdown);
+        assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(fences.len(), 1, "fences: {fences:?}");
         let fence = &fences[0];
         assert_eq!(fence.line, 5);
@@ -226,7 +239,8 @@ echo hi
     #[test]
     fn reads_show_mode() {
         let markdown = "```text { mode=show }\nshown\n```\n";
-        let fences = fence_attributes(markdown).expect("show is a mode");
+        let (fences, errors) = fence_attributes(markdown);
+        assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(fences.len(), 1);
         assert_eq!(fences[0].mode, Some(Mode::Show));
         assert_eq!(fences[0].language, "text");
@@ -236,7 +250,7 @@ echo hi
     #[test]
     fn rejects_a_json_object_at_its_line() {
         let markdown = "```bash {\"window\":\"bob\"}\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("a JSON object is not an attribute list");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("JSON"), "{err:?}");
     }
@@ -244,7 +258,7 @@ echo hi
     #[test]
     fn rejects_bare_words_at_their_line() {
         let markdown = "```bash window=bob\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("bare words are not an attribute list");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("key=value"), "{err:?}");
     }
@@ -252,7 +266,7 @@ echo hi
     #[test]
     fn rejects_pandoc_braces_at_their_line() {
         let markdown = "```{.bash window=bob}\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("a Pandoc class is not an attribute list");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("Pandoc"), "{err:?}");
     }
@@ -260,7 +274,7 @@ echo hi
     #[test]
     fn rejects_an_unknown_attribute() {
         let markdown = "```bash { window=bob colour=red }\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("colour is not an attribute");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("colour"), "{err:?}");
     }
@@ -268,7 +282,7 @@ echo hi
     #[test]
     fn rejects_a_status_that_is_not_an_integer() {
         let markdown = "```bash { status=no }\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("status must be a number");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("status"), "{err:?}");
     }
@@ -276,7 +290,7 @@ echo hi
     #[test]
     fn rejects_a_mode_outside_the_format() {
         let markdown = "```bash { mode=run }\ncmd\n```\n";
-        let err = fence_attributes(markdown).expect_err("run is not a mode");
+        let err = only_error(markdown);
         assert_eq!(err.line, 1);
         assert!(err.message.contains("mode"), "{err:?}");
     }
