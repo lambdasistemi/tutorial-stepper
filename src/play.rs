@@ -113,6 +113,97 @@ fn require_program(name: &str) -> Result<PathBuf, Failure> {
     find_program(name).ok_or_else(|| Failure::Report(format!("{name} is not on PATH\n")))
 }
 
+/// The first need that is not met, in the order given. A need with no minimum is presence only.
+pub(crate) fn unmet_need(needs: &[(&str, Option<&str>)]) -> Option<String> {
+    for (program, minimum) in needs {
+        let Some(path) = find_program(program) else {
+            return Some(format!("{program} was not found\n"));
+        };
+        let Some(required) = minimum else {
+            continue;
+        };
+        let text = match version_text(&path) {
+            Ok(text) => text,
+            Err(message) => return Some(message),
+        };
+        let Some(found) = first_dotted_number(&text) else {
+            return Some(format!("{program} printed no version\n"));
+        };
+        let Some(required_number) = first_dotted_number(required) else {
+            return Some(format!(
+                "{program}'s required version {required} is not a dotted number\n"
+            ));
+        };
+        if is_older(found, required_number) {
+            return Some(format!("{program} {found} is older than {required}\n"));
+        }
+    }
+    None
+}
+
+fn version_text(path: &Path) -> Result<String, String> {
+    let output = Command::new(path)
+        .arg("--version")
+        .env_remove("TMUX")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("cannot run {}: {error}\n", path.display()))?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(combined)
+}
+
+/// The first `[0-9]+(\.[0-9]+)+` in `text`.
+fn first_dotted_number(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        let mut end = index;
+        let mut groups = 0;
+        while end < bytes.len() && bytes[end] == b'.' {
+            let mut cursor = end + 1;
+            if cursor >= bytes.len() || !bytes[cursor].is_ascii_digit() {
+                break;
+            }
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            end = cursor;
+            groups += 1;
+        }
+        if groups >= 1 {
+            return Some(&text[start..end]);
+        }
+    }
+    None
+}
+
+fn is_older(found: &str, required: &str) -> bool {
+    let found = version_components(found);
+    let required = version_components(required);
+    let width = found.len().max(required.len());
+    for index in 0..width {
+        let left = found.get(index).copied().unwrap_or(0);
+        let right = required.get(index).copied().unwrap_or(0);
+        if left != right {
+            return left < right;
+        }
+    }
+    false
+}
+
+fn version_components(version: &str) -> Vec<u64> {
+    version.split('.').map(|part| part.parse().unwrap_or(0)).collect()
+}
+
 fn find_program(name: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&paths) {

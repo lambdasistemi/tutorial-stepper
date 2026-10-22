@@ -1,6 +1,7 @@
 //! `tutorial-stepper play --auto` on a one-window bash tutorial.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
@@ -19,10 +20,25 @@ fn play(dir: &Path, transcript: &Path) -> (Output, u32) {
 }
 
 fn play_with(dir: &Path, transcript: &Path, args: &[String]) -> (Output, u32) {
+    play_prefixed(dir, transcript, args, None)
+}
+
+fn play_prefixed(
+    dir: &Path,
+    transcript: &Path,
+    args: &[String],
+    path_prefix: Option<&Path>,
+) -> (Output, u32) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"));
     command.arg("play").arg("--auto").arg("--transcript").arg(transcript);
     command.args(args);
     command.arg(dir);
+    if let Some(prefix) = path_prefix {
+        let inherited = std::env::var_os("PATH").expect("PATH is set");
+        let mut entries = vec![prefix.to_path_buf()];
+        entries.extend(std::env::split_paths(&inherited));
+        command.env("PATH", std::env::join_paths(entries).expect("the prefixed PATH joins"));
+    }
     let child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -797,6 +813,321 @@ fn a_missing_tmux_or_bash_is_named() {
     assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
     assert!(text(&output.stderr).contains("bash"), "{}", text(&output.stderr));
     assert!(!transcript.exists());
+}
+
+fn executable(dir: &Path, name: &str, body: &str) {
+    fs::create_dir_all(dir).expect("the program directory");
+    let path = dir.join(name);
+    fs::write(&path, body).expect("the program");
+    let mut permissions = fs::metadata(&path).expect("the program metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("the program is executable");
+}
+
+fn first_dotted(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        let mut end = index;
+        let mut groups = 0;
+        while end < bytes.len() && bytes[end] == b'.' {
+            let mut cursor = end + 1;
+            if cursor >= bytes.len() || !bytes[cursor].is_ascii_digit() {
+                break;
+            }
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            end = cursor;
+            groups += 1;
+        }
+        if groups >= 1 {
+            return Some(&text[start..end]);
+        }
+    }
+    None
+}
+
+fn dotted_version(program: &str) -> String {
+    let output = Command::new(program).arg("--version").output().expect("the program runs");
+    let mut combined = text(&output.stdout);
+    combined.push_str(&text(&output.stderr));
+    first_dotted(&combined).expect("a dotted version").to_string()
+}
+
+#[test]
+fn a_missing_program_is_named_before_any_command() {
+    let root = manifest_dir().join("examples/needs-missing");
+    let run = temp_tutorial("needs-missing-run");
+    let transcript = temp_tutorial("needs-missing-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("tutorial-stepper-missing-program"), "{err}");
+    assert!(err.contains("was not found"), "{err}");
+    assert!(!transcript.exists(), "a refused needs check wrote a transcript");
+    assert!(!run.exists(), "a refused needs check created the run directory");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_older_program_is_named_with_the_version_found() {
+    let root = temp_tutorial("needs-older");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"bash >= 99.0.0\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let run = temp_tutorial("needs-older-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let found = dotted_version("bash");
+    let err = text(&output.stderr);
+    assert!(err.contains(&format!("bash {found} is older than 99.0.0")), "{err}");
+    assert!(!transcript.exists());
+    assert!(!run.exists(), "a refused needs check created the run directory");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_program_that_prints_no_version_is_named() {
+    let root = temp_tutorial("needs-no-version");
+    executable(
+        &root.join("bin"),
+        "tutorial-stepper-no-version",
+        "#!/bin/sh\nprintf 'release\\n'\n",
+    );
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"tutorial-stepper-no-version >= 1.0\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("tutorial-stepper-no-version"), "{err}");
+    assert!(err.contains("printed no version"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_missing_program_stops_before_the_setup_script() {
+    let root = temp_tutorial("needs-before-setup");
+    write_tutorial(
+        &root,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"tutorial-stepper-missing-program\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let marker = root.join("marker");
+    fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
+        .expect("the set-up script");
+    let run = temp_tutorial("needs-before-setup-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(
+        &root,
+        &transcript,
+        &["--run".to_string(), run.display().to_string(), "--run-setup".to_string()],
+    );
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("tutorial-stepper-missing-program was not found"), "{err}");
+    assert!(!marker.exists(), "the set-up script ran");
+    assert!(!transcript.exists());
+    assert!(!run.exists(), "a refused needs check created the run directory");
+    server_is_gone(pid);
+}
+
+#[test]
+fn the_first_failing_need_is_the_one_named() {
+    let root = temp_tutorial("needs-order");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+needs = [\"tutorial-stepper-missing-program\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"bash >= 99.0.0\"]
+",
+        "```bash { window=alice }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("tutorial-stepper-missing-program was not found"), "{err}");
+    assert!(!err.contains("older"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_version_is_compared_by_numeric_components() {
+    let root = temp_tutorial("needs-numeric");
+    executable(&root.join("bin"), "number-tool", "#!/bin/sh\nprintf '1.9\\n'\n");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"number-tool >= 1.10\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("number-tool 1.9 is older than 1.10"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_shorter_version_is_padded_with_zeros() {
+    let root = temp_tutorial("needs-padded");
+    executable(&root.join("bin"), "number-tool", "#!/bin/sh\nprintf '1.2\\n'\n");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"number-tool >= 1.2.1\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("number-tool 1.2 is older than 1.2.1"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn the_version_on_standard_error_counts() {
+    let root = temp_tutorial("needs-stderr");
+    executable(&root.join("bin"), "number-tool", "#!/bin/sh\nprintf 'tool 4.5.6\\n' >&2\n");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"number-tool >= 9.0\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("number-tool 4.5.6 is older than 9.0"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_program_with_no_minimum_is_not_asked_for_its_version() {
+    let root = temp_tutorial("needs-present");
+    let record = root.join("record");
+    executable(
+        &root.join("bin"),
+        "tutorial-stepper-present",
+        &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > {}\n", record.display()),
+    );
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"tutorial-stepper-present\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    assert!(!record.exists(), "a need with no minimum ran the program");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_equal_version_is_new_enough() {
+    let root = temp_tutorial("needs-equal");
+    executable(&root.join("bin"), "number-tool", "#!/bin/sh\nprintf '1.2.0\\n'\n");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"number-tool >= 1.2\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    server_is_gone(pid);
 }
 
 fn program_on_path(name: &str) -> PathBuf {

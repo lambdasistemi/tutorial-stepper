@@ -40,6 +40,10 @@ pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup:
         emit(dir, &problem);
         return 1;
     }
+    if let Some(message) = unmet_needs(&loaded) {
+        eprint!("{message}");
+        return 1;
+    }
     if let Some(path) = run {
         if let Some(message) = run_directory_problem(path) {
             eprint!("{message}");
@@ -353,6 +357,16 @@ fn run_directory_problem(path: &Path) -> Option<String> {
         Ok(mut entries) => entries.next().map(|_| format!("{} is not empty\n", path.display())),
         Err(error) => Some(format!("cannot read {}: {error}\n", path.display())),
     }
+}
+
+fn unmet_needs(loaded: &Loaded) -> Option<String> {
+    let needs = loaded
+        .windows
+        .iter()
+        .flat_map(|window| window.needs.iter())
+        .map(|need| (need.program.as_str(), need.minimum.as_deref()))
+        .collect::<Vec<_>>();
+    crate::play::unmet_need(&needs)
 }
 
 fn absolute_in(dir: &Path, relative: &str) -> PathBuf {

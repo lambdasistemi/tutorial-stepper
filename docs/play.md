@@ -23,7 +23,7 @@ flowchart TD
   hook --> stop
 ```
 
-A format problem, zsh, a set-up script the author did not ask to run, or a command marked with a setting is refused before a shell starts. The transcript file is not created. Anything else reaches the shell.
+A format problem, zsh, a set-up script the author did not ask to run, or a command marked with a setting is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell.
 
 ## What runs
 
@@ -36,6 +36,8 @@ tutorial-stepper play --auto examples/one-window --transcript transcript.toml
 The stepper looks up `tmux` on `PATH`, then `bash`. The first one missing is named, and nothing is started. The server uses its own socket and does not read a tmux configuration file. Each declared window is one bash shell, started in that window's folder under the run folder. Without `--run` the run folder is temporary and is removed when the run ends. `--run DIR` keeps that directory: a missing `DIR` is created, an empty directory is used, and a directory that already holds anything is refused without being changed. A `DIR` that is a file is refused.
 
 When the index names a set-up script, it runs only with `--run-setup`. The script is `bash` on that file, in the run folder, after each window folder exists and before any page command. It runs as the user who started `play`. The stepper does not raise privileges and does not invoke `sudo` or `su`. On success the script's own output is discarded, and the confirmation stays the count of page commands. A script that exits with another status stops the run: the message names the script and that status, and no page command runs. A script path that is not a file is named, and nothing is typed. Without `--run-setup` the run stops before any command and names the script. `--run-setup` on a tutorial that names no script changes nothing.
+
+Before that script, and before the run folder is created, every `needs` entry is checked. Windows are checked in index order, and each window's entries in the order written. The first failure is the only one reported. A program that is not on `PATH` stops the run: the message names it and says it was not found. A minimum version runs `PROGRAM --version` and reads standard output and standard error as one text. The version is the first dotted number in that text, digits with at least one further group of `.digits`, matching `[0-9]+(\.[0-9]+)+`. `GNU bash, version 5.2.15(1)-release` yields `5.2.15`. The declared minimum is read the same way. The two numbers are compared component by component, as integers, and a missing component is 0, so `1.2` equals `1.2.0` and `1.10` is newer than `1.9`. An older program stops the run. The message names the program, the dotted number that was found, and the version the index requires. When the text contains no dotted number, the message names the program and says it printed no version. A need with no minimum checks that the program is on `PATH` and does not run it.
 
 The shell loads the stepper's prompt hook. The hook reports that shell's command end and its exit status. The stepper does not decide that a command ended by a deadline or by reading the output: a command that sleeps is waited out. The server is gone when the run ends, whether the run passed or failed.
 

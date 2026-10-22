@@ -16,9 +16,15 @@ pub(crate) struct Page {
     pub path: String,
 }
 
+pub(crate) struct Need {
+    pub program: String,
+    pub minimum: Option<String>,
+}
+
 pub(crate) struct Window {
     pub name: String,
     pub folder: String,
+    pub needs: Vec<Need>,
 }
 
 pub(crate) enum Shell {
@@ -208,16 +214,15 @@ fn read_windows(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Win
                 None => String::new(),
             },
         };
+        let needs =
+            table.get("needs").map(|item| read_needs(item, text, problems)).unwrap_or_default();
         if windows.iter().any(|window| window.name == name.value) {
             problems.push(at(
                 name.line,
                 format!("window \"{}\" is declared more than once", name.value),
             ));
         } else {
-            windows.push(Window { name: name.value.to_string(), folder });
-        }
-        if let Some(needs) = table.get("needs") {
-            check_needs(needs, text, problems);
+            windows.push(Window { name: name.value.to_string(), folder, needs });
         }
     }
     windows
@@ -360,15 +365,16 @@ fn check_paths(paths: &[RawPath], settings: &[Setting], problems: &mut Vec<Probl
     }
 }
 
-fn check_needs(item: &Item, text: &str, problems: &mut Vec<Problem>) {
+fn read_needs(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Need> {
     let Some(array) = item.as_value().and_then(Value::as_array) else {
         problems.push(index_problem(
             text,
             item.span(),
             "needs must be a list of program names".to_string(),
         ));
-        return;
+        return Vec::new();
     };
+    let mut needs = Vec::new();
     for entry in array {
         let Some(need) = entry.as_str() else {
             problems.push(index_problem(
@@ -386,7 +392,19 @@ fn check_needs(item: &Item, text: &str, problems: &mut Vec<Problem>) {
                     "needs entry \"{need}\" must name a program, optionally followed by >= and a version"
                 ),
             ));
+            continue;
         }
+        needs.push(parse_need(need));
+    }
+    needs
+}
+
+fn parse_need(entry: &str) -> Need {
+    match entry.split_once(" >= ") {
+        Some((program, version)) => {
+            Need { program: program.to_string(), minimum: Some(version.to_string()) }
+        }
+        None => Need { program: entry.to_string(), minimum: None },
     }
 }
 

@@ -34,11 +34,11 @@ Test first. The binary is the subject.
 
 ## Phase 5: The needs check
 
-- [ ] A failing test that `examples/needs-missing` stops before the first command, names `tutorial-stepper-missing-program`, and says it was not found.
-- [ ] A failing test that `bash >= 99.0.0` stops with the dotted number `bash --version` printed, when that number is older.
-- [ ] A failing test that a program that prints no dotted number, and declares a minimum, stops and says no version was found.
-- [ ] A failing test that a program on `PATH` with no minimum does not need `--version` to succeed.
-- [ ] `docs/play.md` and `docs/format.md` say how the dotted number is read and what happens when none is printed, in the same commit.
+- [x] A failing test that `examples/needs-missing` stops before the first command, names `tutorial-stepper-missing-program`, and says it was not found.
+- [x] A failing test that `bash >= 99.0.0` stops with the dotted number `bash --version` printed, when that number is older.
+- [x] A failing test that a program that prints no dotted number, and declares a minimum, stops and says no version was found.
+- [x] A failing test that a program on `PATH` with no minimum does not need `--version` to succeed.
+- [x] `docs/play.md` and `docs/format.md` say how the dotted number is read and what happens when none is printed, in the same commit.
 
 ## Phase 6: Verification
 
