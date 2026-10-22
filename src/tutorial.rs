@@ -38,8 +38,8 @@ pub(crate) fn script(dir: &Path, path: Option<&str>) -> u8 {
 }
 
 /// Play a tutorial in the shell its index declares. The value is the process exit code.
-/// `path` selects one tested path. Absent plays the tutorial once, and a block marked
-/// `if=` is refused.
+/// `path` selects one tested path. Absent plays every tested path, or one run on the
+/// defaults when the tutorial declares none.
 pub(crate) fn play(
     dir: &Path,
     transcript: &Path,
@@ -62,7 +62,7 @@ fn play_as(
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
     };
-    if let Some(problem) = refuse_scope(&loaded, run_setup, path) {
+    if let Some(problem) = refuse_scope(&loaded, run_setup) {
         emit(dir, &problem);
         return 1;
     }
@@ -92,35 +92,104 @@ fn play_as(
         eprint!("{message}");
         return 1;
     }
-    if let Some(path) = run {
-        if let Some(message) = run_directory_problem(path) {
+    if let Some(run_dir) = run {
+        if let Some(message) = run_directory_problem(run_dir) {
             eprint!("{message}");
             return 1;
         }
     }
+    if path.is_none() && !loaded.paths.is_empty() {
+        return play_paths(dir, &loaded, transcript, run, run_setup);
+    }
+    let chosen = values_in_force(&loaded, selected.as_deref());
+    match play_one(dir, &loaded, transcript, run, run_setup, path, &chosen) {
+        Ok(count) => {
+            println!("{}", played(count));
+            0
+        }
+        Err(failure) => report(dir, failure),
+    }
+}
+
+/// Play each tested path in index order. A failure does not stop the next path.
+fn play_paths(
+    dir: &Path,
+    loaded: &Loaded,
+    transcript: &Path,
+    run: Option<&Path>,
+    run_setup: bool,
+) -> u8 {
+    let mut failed = false;
+    let mut combined = String::new();
+    let mut started = false;
+    for tested in &loaded.paths {
+        let part = transcript_part(&tested.name);
+        let _ = fs::remove_file(&part);
+        let owned_run = run.map(|parent| parent.join(&tested.name));
+        match play_one(
+            dir,
+            loaded,
+            &part,
+            owned_run.as_deref(),
+            run_setup,
+            Some(&tested.name),
+            &tested.values,
+        ) {
+            Ok(count) => println!("{}: {}", tested.name, played(count)),
+            Err(failure) => {
+                eprint!("{}", prefix_first_line(&tested.name, &failure_text(dir, failure)));
+                failed = true;
+            }
+        }
+        if part.is_file() {
+            match fs::read_to_string(&part) {
+                Ok(text) => {
+                    started = true;
+                    combined.push_str(&text);
+                }
+                Err(error) => {
+                    eprintln!("cannot read the transcript: {error}");
+                    failed = true;
+                }
+            }
+        }
+        let _ = fs::remove_file(&part);
+    }
+    if started && !write_combined(transcript, &combined) {
+        return 1;
+    }
+    if failed {
+        1
+    } else {
+        0
+    }
+}
+
+fn play_one(
+    dir: &Path,
+    loaded: &Loaded,
+    transcript: &Path,
+    run: Option<&Path>,
+    run_setup: bool,
+    path: Option<&str>,
+    chosen: &[(String, String)],
+) -> Result<usize, crate::play::Failure> {
     let windows = loaded
         .windows
         .iter()
         .map(|window| (window.name.clone(), window.folder.clone()))
         .collect::<Vec<_>>();
     let initial = windows.first().map(|(name, _)| name.as_str()).unwrap_or("");
-    let commands = resolve_commands(&loaded.runnables, selected.as_deref(), initial);
-    let chosen = match &selected {
-        Some(values) => values.clone(),
-        None => loaded
-            .settings
-            .iter()
-            .map(|setting| (setting.name.clone(), setting.default.clone()))
-            .collect(),
-    };
-    let environment = environment_text(&loaded.settings, &chosen);
+    let filter = if loaded.settings.is_empty() { None } else { Some(chosen) };
+    let commands = resolve_commands(&loaded.runnables, filter, initial);
+    let environment = environment_text(&loaded.settings, chosen);
     let setup = if run_setup {
         loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
     } else {
         None
     };
-    let setup = setup.as_ref().map(|(name, path)| (name.as_str(), path.as_path()));
-    match crate::play::drive(
+    let setup = setup.as_ref().map(|(name, script)| (name.as_str(), script.as_path()));
+    crate::play::drive(
         transcript,
         &commands,
         &windows,
@@ -128,12 +197,50 @@ fn play_as(
         setup,
         loaded.shell,
         crate::play::DriveExtras { environment: environment.as_deref(), path },
-    ) {
-        Ok(count) => {
-            println!("{}", played(count));
-            0
+    )
+}
+
+fn values_in_force(
+    loaded: &Loaded,
+    selected: Option<&[(String, String)]>,
+) -> Vec<(String, String)> {
+    match selected {
+        Some(values) => values.to_vec(),
+        None => loaded
+            .settings
+            .iter()
+            .map(|setting| (setting.name.clone(), setting.default.clone()))
+            .collect(),
+    }
+}
+
+fn transcript_part(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static PARTS: AtomicU64 = AtomicU64::new(0);
+    let n = PARTS.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("tutorial-stepper-{n}-{name}.toml"))
+}
+
+fn write_combined(transcript: &Path, text: &str) -> bool {
+    if let Some(parent) = transcript.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                eprintln!("cannot write the transcript: {error}");
+                return false;
+            }
         }
-        Err(failure) => report(dir, failure),
+    }
+    if let Err(error) = fs::write(transcript, text) {
+        eprintln!("cannot write the transcript: {error}");
+        return false;
+    }
+    true
+}
+
+fn prefix_first_line(name: &str, text: &str) -> String {
+    match text.split_once('\n') {
+        Some((first, rest)) => format!("{name}: {first}\n{rest}"),
+        None => format!("{name}: {text}"),
     }
 }
 
@@ -503,22 +610,13 @@ fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
     std::env::current_dir().map(|cwd| cwd.join(joined)).unwrap_or(dir.join(relative))
 }
 
-fn refuse_scope(loaded: &Loaded, run_setup: bool, path: Option<&str>) -> Option<Problem> {
+fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
     if !run_setup {
         if let Some((script, line)) = &loaded.setup {
             return Some(Problem {
                 relative: "tutorial.toml".to_string(),
                 line: *line,
                 message: format!("play stops before the set-up script {script}"),
-            });
-        }
-    }
-    if path.is_none() {
-        if let Some(command) = loaded.runnables.iter().find(|command| command.setting.is_some()) {
-            return Some(Problem {
-                relative: command.page.clone(),
-                line: command.line,
-                message: "play --auto does not choose a setting".to_string(),
             });
         }
     }
@@ -569,25 +667,32 @@ fn environment_text(settings: &[index::Setting], values: &[(String, String)]) ->
     Some(text)
 }
 
-fn report(dir: &Path, failure: crate::play::Failure) -> u8 {
+fn failure_text(dir: &Path, failure: crate::play::Failure) -> String {
     match failure {
         crate::play::Failure::Status { page, line, body, got, expected } => {
             let path = dir.join(page);
-            eprint!("{}:{line}: command exited {got}, expected {expected}\n{body}", path.display());
+            let mut text = format!(
+                "{}:{line}: command exited {got}, expected {expected}\n{body}",
+                path.display()
+            );
             if !body.ends_with('\n') {
-                eprintln!();
+                text.push('\n');
             }
-            1
+            text
         }
         crate::play::Failure::Report(message) => {
             if message.ends_with('\n') {
-                eprint!("{message}");
+                message
             } else {
-                eprintln!("{message}");
+                format!("{message}\n")
             }
-            1
         }
     }
+}
+
+fn report(dir: &Path, failure: crate::play::Failure) -> u8 {
+    eprint!("{}", failure_text(dir, failure));
+    1
 }
 
 fn played(count: usize) -> String {

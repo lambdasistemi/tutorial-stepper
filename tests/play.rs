@@ -388,7 +388,7 @@ fn a_broken_tutorial_prints_the_same_problems_and_writes_no_transcript() {
 }
 
 #[test]
-fn a_setup_script_and_a_setting_are_refused() {
+fn a_setup_script_is_refused() {
     let zsh = manifest_dir().join("examples/if");
     let zsh_transcript = temp_tutorial("zsh-transcript").join("transcript.toml");
     let (output, pid) = play(&zsh, &zsh_transcript);
@@ -418,31 +418,6 @@ folder = \"bob\"
     let err = text(&output.stderr);
     assert!(err.contains("setup.sh"), "{err}");
     assert!(!setup_transcript.exists());
-    server_is_gone(pid);
-
-    let setting = temp_tutorial("setting-branch");
-    write_tutorial(
-        &setting,
-        "\
-pages = [\"welcome.md\"]
-
-[[window]]
-name = \"bob\"
-folder = \"bob\"
-
-[[setting]]
-name = \"SIGNING\"
-default = \"external\"
-values = [\"external\", \"internal\"]
-",
-        "```bash { window=bob if=SIGNING:external }\necho external\n```\n",
-    );
-    let setting_transcript = setting.join("transcript.toml");
-    let (output, pid) = play(&setting, &setting_transcript);
-    assert_eq!(output.status.code(), Some(1));
-    let err = text(&output.stderr);
-    assert!(err.contains("setting"), "{err}");
-    assert!(!setting_transcript.exists());
     server_is_gone(pid);
 }
 
@@ -600,6 +575,150 @@ fn a_tutorial_with_no_settings_writes_no_environment_file() {
 }
 
 #[test]
+fn a_tutorial_with_no_tested_paths_plays_the_default() {
+    let root = temp_tutorial("default-setting");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+",
+        "\
+```bash { window=bob }
+echo \"$SIGNING\"
+```
+
+```bash { window=bob if=SIGNING:external }
+echo external
+```
+
+```bash { window=bob if=SIGNING:internal }
+echo internal
+```
+",
+    );
+    let run = temp_tutorial("default-setting-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "2 commands played\n");
+    assert_eq!(
+        fs::read_to_string(run.join(".env")).expect("the environment file"),
+        "SIGNING=external\n"
+    );
+    let commands = transcript_commands(&transcript);
+    let bodies: Vec<_> = commands.iter().map(|command| string_field(command, "command")).collect();
+    assert_eq!(bodies, vec!["echo \"$SIGNING\"\n", "echo external\n"]);
+    assert_eq!(string_field(commands.get(0).expect("the shared command"), "output"), "external\n");
+    assert!(commands.iter().all(|command| command.get("path").is_none()), "{commands:?}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn every_tested_path_plays_from_its_own_folder_and_a_failure_continues() {
+    let root = temp_tutorial("every-path");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+
+[[setting]]
+name = \"PACE\"
+default = \"slow\"
+values = [\"slow\", \"fast\"]
+
+[[path]]
+name = \"quick\"
+values = { SIGNING = \"internal\", PACE = \"fast\" }
+
+[[path]]
+name = \"careful\"
+values = { SIGNING = \"external\", PACE = \"slow\" }
+",
+        "\
+```bash { window=bob }
+echo \"$SIGNING $PACE\"
+```
+
+```bash { window=bob if=SIGNING:internal }
+echo internal
+```
+
+```bash { window=bob if=SIGNING:external }
+echo external
+```
+
+```bash { window=bob if=PACE:fast status=19 }
+echo fast
+```
+
+```bash { window=bob if=PACE:slow }
+echo slow
+```
+",
+    );
+    let run = temp_tutorial("every-path-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    assert_eq!(text(&output.stdout), "careful: 3 commands played\n");
+    let err = text(&output.stderr);
+    let mut lines = err.lines();
+    let first = lines.next().unwrap_or("");
+    assert!(first.starts_with("quick: "), "{err}");
+    assert!(first.contains("expected 19"), "{err}");
+    assert_eq!(lines.next().unwrap_or(""), "echo fast");
+    assert_eq!(
+        fs::read_to_string(run.join("quick").join(".env")).expect("quick environment"),
+        "SIGNING=internal\nPACE=fast\n"
+    );
+    assert_eq!(
+        fs::read_to_string(run.join("careful").join(".env")).expect("careful environment"),
+        "SIGNING=external\nPACE=slow\n"
+    );
+    assert!(run.join("quick").join("bob").is_dir(), "quick did not keep its window");
+    assert!(run.join("careful").join("bob").is_dir(), "a later path did not play");
+    assert!(!run.join(".env").exists(), "the parent run folder held .env");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 6, "{commands:?}");
+    let paths: Vec<_> = commands.iter().map(|command| string_field(command, "path")).collect();
+    assert_eq!(paths, vec!["quick", "quick", "quick", "careful", "careful", "careful"]);
+    assert_eq!(string_field(commands.get(0).expect("quick shared"), "output"), "internal fast\n");
+    assert_eq!(string_field(commands.get(3).expect("careful shared"), "output"), "external slow\n");
+    let bodies: Vec<_> = commands.iter().map(|command| string_field(command, "command")).collect();
+    assert!(bodies[..3].iter().any(|body| body.contains("echo fast")));
+    assert!(!bodies[..3].iter().any(|body| body.contains("echo slow")));
+    assert!(bodies[3..].iter().any(|body| body.contains("echo slow")));
+    assert!(!bodies[3..].iter().any(|body| body.contains("echo fast")));
+    server_is_gone(pid);
+}
+
+#[test]
 fn a_zsh_tutorial_records_the_command_its_output_and_its_status() {
     let root = copy_with_shell("one-window", "zsh");
     let transcript = root.join("transcript.toml");
@@ -728,6 +847,7 @@ fn every_valid_example_plays_under_bash_and_zsh() {
         "slow",
         "two-windows",
         "setup",
+        "settings",
         "needs-missing",
     ];
     let mut seen = expected.to_vec();
@@ -766,6 +886,15 @@ fn every_valid_example_plays_under_bash_and_zsh() {
             "if" => {
                 assert!(bash.stderr.contains("setup.sh"), "{}", bash.stderr);
                 assert!(zsh.stderr.contains("setup.sh"), "{}", zsh.stderr);
+            }
+            "settings" => {
+                assert_eq!(bash.stdout, "careful: 3 commands played\n");
+                assert_eq!(bash.code, Some(1));
+                for stderr in [&bash.stderr, &zsh.stderr] {
+                    assert!(stderr.contains("quick: "), "{stderr}");
+                    assert!(stderr.contains("expected 19"), "{stderr}");
+                    assert!(stderr.contains("echo fast"), "{stderr}");
+                }
             }
             "slow" => {
                 assert!(bash.elapsed >= 120, "{name} bash ended after {} seconds", bash.elapsed);

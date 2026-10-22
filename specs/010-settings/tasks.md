@@ -35,12 +35,12 @@ Test first. The binary, a real shell, and the run folder are the subject.
 
 Test first.
 
-- [ ] A failing test that a tutorial with no tested paths and one setting plays the default, writes that default into `.env`, and runs the matching block.
-- [ ] A failing test that two tested paths play without `--path`, that `--run DIR` holds one sub-folder per path, and that a failing path does not stop the later path.
-- [ ] The report names each path, and the exit code is non-zero when either path fails.
-- [ ] `examples/settings`, with the outcomes in the specification. `check`, `script`, and the both-shells play sweep include it.
-- [ ] The smallest change that makes those tests pass. The refusal `play --auto does not choose a setting` is removed.
-- [ ] `docs/play.md` and the README describe the every-path run in the same commit.
+- [x] A failing test that a tutorial with no tested paths and one setting plays the default, writes that default into `.env`, and runs the matching block.
+- [x] A failing test that two tested paths play without `--path`, that `--run DIR` holds one sub-folder per path, and that a failing path does not stop the later path.
+- [x] The report names each path, and the exit code is non-zero when either path fails.
+- [x] `examples/settings`, with the outcomes in the specification. `check`, `script`, and the both-shells play sweep include it.
+- [x] The smallest change that makes those tests pass. The refusal `play --auto does not choose a setting` is removed.
+- [x] `docs/play.md` and the README describe the every-path run in the same commit.
 
 ## Phase 5: Verification
 

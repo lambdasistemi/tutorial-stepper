@@ -9,7 +9,7 @@ The author, who wants the tutorial to run with nobody at the keyboard, whether t
 ```mermaid
 flowchart TD
   directory["Tutorial directory"]
-  path["Tested path, when --path is set"]
+  path["Each tested path"]
   refuse["Refused before a shell starts"]
   env[".env in the run folder"]
   server["Private tmux server and one bash or zsh per window"]
@@ -27,7 +27,7 @@ flowchart TD
   hook --> stop
 ```
 
-A format problem, or a set-up script the author did not ask to run, is refused before a shell starts. So is a command marked with a setting when `--path` is absent. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell.
+A format problem, or a set-up script the author did not ask to run, is refused before a shell starts. So is a program named in `needs` when it is missing, older than the declared minimum, or prints no version. The transcript file is not created. Anything else reaches the shell. When the index declares tested paths and `--path` is absent, each path repeats from `.env` in its own clean run folder. A path that fails does not skip the later paths.
 
 ## What runs
 
@@ -35,7 +35,7 @@ A format problem, or a set-up script the author did not ask to run, is refused b
 tutorial-stepper play --auto examples/one-window --transcript transcript.toml
 ```
 
-`--auto` and `--transcript` are both required. `--path NAME` plays that one tested path. A sound run prints `1 command played` or `N commands played` on standard output, leaves standard error empty, and exits 0.
+`--auto` and `--transcript` are both required. `--path NAME` plays that one tested path and prints `1 command played` or `N commands played`. Without `--path`, every tested path plays, and a path that played through prints `NAME: N commands played`. A sound run leaves standard error empty and exits 0. The command exits 1 when a path fails.
 
 ## The values in force
 
@@ -52,7 +52,9 @@ Each window's shell sources that file while it is starting, with every assignmen
 
 A name that is not a tested path is refused before a shell starts and before the run folder is created. The message is `tutorial.toml:1: path "NAME" is not a tested path`. Nothing is written.
 
-Without `--path`, a command marked `if=` is still refused. The message names that block, and no shell starts. A tutorial with no such command plays once, as before. When it declares settings, `.env` holds the defaults.
+Without `--path`, a tutorial that declares tested paths plays each of them, in the order the index lists them. Each path starts from a clean run folder. With `--run DIR`, that folder is `DIR/<name>`, and `DIR` itself must be missing or empty. Without `--run`, each path's folder is temporary. A path that fails is reported, and the next path still starts. Standard error prints the failure this command already prints, with the path's name and a colon before the first line only. The command exits 1 if any path fails. The transcript is written once, after the paths that started a shell, and each command carries `path`.
+
+A tutorial that declares no tested path plays once. When it declares settings, `.env` holds the defaults, and a block marked `if=` runs only for the default it names. The report is `N commands played`, with no path name, and the transcript has no `path` key.
 
 The stepper looks up `tmux` on `PATH`, then the shell the index declares: `zsh` when the index says so, and `bash` otherwise. The first one missing is named, and nothing is started. A zsh tutorial that runs its set-up script also needs `bash`, because that script is bash. The server uses its own socket and does not read a tmux configuration file. Each declared window is one shell of that kind, started in that window's folder under the run folder. Without `--run` the run folder is temporary and is removed when the run ends. `--run DIR` keeps that directory: a missing `DIR` is created, an empty directory is used, and a directory that already holds anything is refused without being changed. A `DIR` that is a file is refused.
 
@@ -68,7 +70,6 @@ A tutorial that `tutorial-stepper check` rejects prints the same problems and cr
 
 - The tutorial declares a set-up script and `--run-setup` was not given. The message names the script. The script is not run.
 - The tutorial declares a set-up script, `--run-setup` was given, and the effective user is root. The message names the script and says it would run as root. The script is not run.
-- A command is marked `if=` and `--path` was not given. This command does not choose a setting. The message names that block.
 - `--path` names a path the index does not declare. The message names that path. The run folder is not created.
 
 ## The transcript

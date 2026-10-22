@@ -1,0 +1,23 @@
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"
+
+[[setting]]
+name = "SIGNING"
+default = "external"
+values = ["external", "internal"]
+
+[[setting]]
+name = "PACE"
+default = "slow"
+values = ["slow", "fast"]
+
+[[path]]
+name = "careful"
+values = { SIGNING = "external", PACE = "slow" }
+
+[[path]]
+name = "quick"
+values = { SIGNING = "internal", PACE = "fast" }
