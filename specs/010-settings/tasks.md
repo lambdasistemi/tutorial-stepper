@@ -23,13 +23,13 @@ Test first. The binary is the subject.
 
 Test first. The binary, a real shell, and the run folder are the subject.
 
-- [ ] A failing test that `play --auto --path careful --run DIR` on a two-setting tutorial writes `.env` as two `NAME=value` lines, plays only that path's blocks, and records `external slow` as the shared command's output.
-- [ ] The same test under zsh.
-- [ ] A failing test that the other path's block is absent from the transcript, and that the transcript's commands carry `path`.
-- [ ] A failing test that an unknown `--path` writes no transcript and creates no run folder.
-- [ ] A failing test that a tutorial with no settings still plays, writes no `.env`, and writes no `path` key.
-- [ ] The smallest change that makes those tests pass. `.env` is written before the windows open and sourced from the bash hook and the zsh hook before the prompt hook. Without `--path`, a block marked `if=` is still refused, until phase 4.
-- [ ] `docs/play.md` and `docs/format.md` describe `.env` and `--path` in the same commit. `play --help` names `--path` and stays within the line limit.
+- [x] A failing test that `play --auto --path careful --run DIR` on a two-setting tutorial writes `.env` as two `NAME=value` lines, plays only that path's blocks, and records `external slow` as the shared command's output.
+- [x] The same test under zsh.
+- [x] A failing test that the other path's block is absent from the transcript, and that the transcript's commands carry `path`.
+- [x] A failing test that an unknown `--path` writes no transcript and creates no run folder.
+- [x] A failing test that a tutorial with no settings still plays, writes no `.env`, and writes no `path` key.
+- [x] The smallest change that makes those tests pass. `.env` is written before the windows open and sourced from the bash hook and the zsh hook before the prompt hook. Without `--path`, a block marked `if=` is still refused, until phase 4.
+- [x] `docs/play.md` and `docs/format.md` describe `.env` and `--path` in the same commit. `play --help` names `--path` and stays within the line limit.
 
 ## Phase 4: Every tested path
 

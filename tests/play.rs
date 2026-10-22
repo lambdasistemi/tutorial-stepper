@@ -446,6 +446,159 @@ values = [\"external\", \"internal\"]
     server_is_gone(pid);
 }
 
+const TWO_SETTINGS: &str = "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+
+[[setting]]
+name = \"PACE\"
+default = \"slow\"
+values = [\"slow\", \"fast\"]
+
+[[path]]
+name = \"careful\"
+values = { SIGNING = \"external\", PACE = \"slow\" }
+
+[[path]]
+name = \"quick\"
+values = { SIGNING = \"internal\", PACE = \"fast\" }
+";
+
+const TWO_SETTINGS_PAGE: &str = "\
+```bash { window=bob }
+echo \"$SIGNING $PACE\"
+```
+
+```bash { window=alice if=SIGNING:internal }
+echo internal
+```
+
+```bash { }
+echo after
+```
+
+```bash { window=bob if=SIGNING:external }
+echo external
+```
+
+```bash { window=bob if=PACE:fast }
+echo fast
+```
+
+```bash { window=bob if=PACE:slow }
+echo slow
+```
+";
+
+fn assert_careful_path(root: &Path, shell: &str) {
+    let run = temp_tutorial(&format!("careful-{shell}-run"));
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(
+        root,
+        &transcript,
+        &[
+            "--path".to_string(),
+            "careful".to_string(),
+            "--run".to_string(),
+            run.display().to_string(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{shell} stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert!(output.stderr.is_empty(), "{shell} stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "4 commands played\n");
+    assert_eq!(
+        fs::read_to_string(run.join(".env")).expect("the environment file"),
+        "SIGNING=external\nPACE=slow\n"
+    );
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 4, "{commands:?}");
+    let bodies: Vec<_> = commands.iter().map(|command| string_field(command, "command")).collect();
+    assert_eq!(
+        bodies,
+        vec!["echo \"$SIGNING $PACE\"\n", "echo after\n", "echo external\n", "echo slow\n"]
+    );
+    assert_eq!(
+        string_field(commands.get(0).expect("the shared command"), "output"),
+        "external slow\n"
+    );
+    assert_eq!(string_field(commands.get(1).expect("the following command"), "window"), "bob");
+    for command in &commands {
+        assert_eq!(string_field(command, "path"), "careful");
+    }
+    assert!(!bodies.iter().any(|body| body.contains("internal") || body.contains("fast")));
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_tested_path_writes_its_values_and_runs_only_its_blocks() {
+    let root = temp_tutorial("careful-bash");
+    write_tutorial(&root, TWO_SETTINGS, TWO_SETTINGS_PAGE);
+    assert_careful_path(&root, "bash");
+}
+
+#[test]
+fn a_tested_path_loads_its_values_under_zsh() {
+    let root = temp_tutorial("careful-zsh");
+    write_tutorial(&root, &format!("shell = \"zsh\"\n{TWO_SETTINGS}"), TWO_SETTINGS_PAGE);
+    assert_careful_path(&root, "zsh");
+}
+
+#[test]
+fn an_unknown_play_path_writes_nothing() {
+    let root = temp_tutorial("unknown-play-path");
+    write_tutorial(&root, TWO_SETTINGS, TWO_SETTINGS_PAGE);
+    let run = temp_tutorial("unknown-play-path-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_with(
+        &root,
+        &transcript,
+        &["--path".to_string(), "nope".to_string(), "--run".to_string(), run.display().to_string()],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    let index = root.join("tutorial.toml");
+    assert_eq!(
+        text(&output.stderr),
+        format!("{}:1: path \"nope\" is not a tested path\n", index.display())
+    );
+    assert!(!transcript.exists(), "an unknown path wrote a transcript");
+    assert!(!run.exists(), "an unknown path created the run directory");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_tutorial_with_no_settings_writes_no_environment_file() {
+    let root = manifest_dir().join("examples/one-window");
+    let run = temp_tutorial("no-settings-run");
+    let transcript = temp_tutorial("no-settings-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert!(!run.join(".env").exists(), "a tutorial with no settings wrote .env");
+    let commands = transcript_commands(&transcript);
+    let command = commands.get(0).expect("the command");
+    assert!(command.get("path").is_none(), "a tutorial with no paths wrote path: {command:?}");
+    server_is_gone(pid);
+}
+
 #[test]
 fn a_zsh_tutorial_records_the_command_its_output_and_its_status() {
     let root = copy_with_shell("one-window", "zsh");

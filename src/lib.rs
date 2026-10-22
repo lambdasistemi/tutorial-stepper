@@ -38,8 +38,8 @@ pub fn run() -> u8 {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
             Command::Script { dir, path } => script(&dir, path.as_deref()),
-            Command::Play { auto: _, dir, transcript, run, run_setup } => {
-                play(&dir, &transcript, run.as_deref(), run_setup)
+            Command::Play { auto: _, dir, transcript, run, run_setup, path } => {
+                play(&dir, &transcript, run.as_deref(), run_setup, path.as_deref())
             }
         },
         Err(err) => {
@@ -96,7 +96,7 @@ enum Command {
     /// Play a tutorial in the shell its index declares.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each command runs in the shell the index declares, bash when the index does not say. The transcript records the window, the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+        after_help = "Each command runs in the shell the index declares, bash when the index does not say. The transcript records the window, the command, its output, its status, and its start and end time. --path NAME plays that tested path: the values are written to .env in the run folder, and every window loads the file before its first command. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
     )]
     Play {
         /// Play the tutorial without stopping for a person.
@@ -111,6 +111,9 @@ enum Command {
         /// Run the declared set-up script before the first page.
         #[arg(long)]
         run_setup: bool,
+        /// Tested path. Its values are loaded into every window.
+        #[arg(long, value_name = "NAME")]
+        path: Option<String>,
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
@@ -129,6 +132,7 @@ fn play(
     transcript: &std::path::Path,
     run: Option<&std::path::Path>,
     run_setup: bool,
+    path: Option<&str>,
 ) -> u8 {
-    tutorial::play(dir, transcript, run, run_setup)
+    tutorial::play(dir, transcript, run, run_setup, path)
 }

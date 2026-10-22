@@ -11,6 +11,14 @@ use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
 use crate::tutorial::PlayCommand;
 
+/// What one run writes into the windows besides the commands.
+pub(crate) struct DriveExtras<'a> {
+    /// The `.env` text. Absent when the tutorial declares no settings.
+    pub environment: Option<&'a str>,
+    /// Tested path name recorded on each transcript command. Absent when the run is not a path.
+    pub path: Option<&'a str>,
+}
+
 /// Why a play stopped.
 #[derive(Debug)]
 pub(crate) enum Failure {
@@ -32,6 +40,7 @@ pub(crate) enum Failure {
 }
 
 struct Entry {
+    path: Option<String>,
     page: String,
     line: usize,
     window: String,
@@ -59,11 +68,14 @@ struct Session {
     panes: Vec<Pane>,
     marker: String,
     shell_name: String,
+    env_path: Option<PathBuf>,
+    path_name: Option<String>,
 }
 
 /// Play `commands` in `windows` and write `transcript`. The count is how many ran.
 /// Each window is a name and its folder relative to the run folder.
 /// `shell` is the shell the index declares.
+/// `extras.environment`, when present, is written to `.env` before any window opens.
 pub(crate) fn drive(
     transcript: &Path,
     commands: &[PlayCommand],
@@ -71,6 +83,7 @@ pub(crate) fn drive(
     run: Option<&Path>,
     setup: Option<(&str, &Path)>,
     shell: crate::index::Shell,
+    extras: DriveExtras<'_>,
 ) -> Result<usize, Failure> {
     if windows.is_empty() {
         return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
@@ -82,7 +95,7 @@ pub(crate) fn drive(
     };
     let shell_path = require_program(shell_program)?;
     ensure_transcript_directory(transcript)?;
-    let mut session = Session::prepare(tmux, windows, run, shell_program)?;
+    let mut session = Session::prepare(tmux, windows, run, shell_program, &extras)?;
     if let Some((name, script)) = setup {
         let bash = if matches!(shell, crate::index::Shell::Bash) {
             shell_path.clone()
@@ -246,6 +259,7 @@ impl Session {
         windows: &[(String, String)],
         run: Option<&Path>,
         shell_name: &str,
+        extras: &DriveExtras<'_>,
     ) -> Result<Self, Failure> {
         let suffix = unique_suffix();
         let keep_run = run.is_some();
@@ -263,6 +277,19 @@ impl Session {
             }
             return Err(Failure::Report(format!("cannot create the run directory: {error}\n")));
         }
+        let env_path = if let Some(text) = extras.environment {
+            let path = run_dir.join(".env");
+            if let Err(error) = fs::write(&path, text) {
+                if !keep_run {
+                    remove_tree(&run_dir);
+                }
+                remove_tree(&control_dir);
+                return Err(Failure::Report(format!("cannot write .env: {error}\n")));
+            }
+            Some(absolute(&path))
+        } else {
+            None
+        };
         let mut panes = Vec::new();
         for (name, folder) in windows {
             let dir = run_dir.join(folder);
@@ -290,6 +317,8 @@ impl Session {
             control_dir,
             panes,
             shell_name: shell_name.to_string(),
+            env_path,
+            path_name: extras.path.map(str::to_string),
         })
     }
 
@@ -322,6 +351,7 @@ impl Session {
             let output = self.capture_output(index, log_from)?;
             let failed = got != command.expected;
             entries.push(Entry {
+                path: self.path_name.clone(),
                 page: command.page.clone(),
                 line: command.line,
                 window: command.window.clone(),
@@ -368,6 +398,15 @@ impl Session {
             .map_err(|error| Failure::Report(format!("cannot prepare the shell: {error}\n")))
     }
 
+    fn env_export(&self) -> String {
+        match &self.env_path {
+            Some(path) => {
+                format!("export TUTORIAL_STEPPER_ENV={}\n", sh_single(&path.display().to_string()))
+            }
+            None => String::new(),
+        }
+    }
+
     fn write_launcher(
         &self,
         index: usize,
@@ -378,17 +417,18 @@ impl Session {
         let status = sh_single(&pane.status_path.display().to_string());
         let prompt = sh_single(&self.marker);
         let program = sh_single(&shell.display().to_string());
+        let environment = self.env_export();
         let launcher = match kind {
             crate::index::Shell::Bash => {
                 let hook = sh_single(&self.control_dir.join("hook").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset BASH_ENV\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {program} --noprofile --rcfile {hook}\n"
+                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {program} --noprofile --rcfile {hook}\n"
                 )
             }
             crate::index::Shell::Zsh => {
                 let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset ENV\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
                 )
             }
         };
@@ -602,11 +642,17 @@ fn remove_tree(path: &Path) {
 }
 
 // No `-i`: that flag makes bash exit before the hook runs. The pane is a
-// terminal, so the shell is interactive without it. The hook appends the
-// exit status before the prompt is drawn, which is why the output wait
-// follows the status line. zsh's `status` parameter is read-only, so the
-// hook stores the code under another name.
+// terminal, so the shell is interactive without it. The environment file is
+// sourced before the prompt hook, so those assignments are not commands.
+// The hook appends the exit status before the prompt is drawn, which is why
+// the output wait follows the status line. zsh's `status` parameter is
+// read-only, so the hook stores the code under another name.
 const BASH_HOOK: &str = r#"
+if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
+  set -a
+  . "$TUTORIAL_STEPPER_ENV"
+  set +a
+fi
 PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"'
 PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
 PS2=
@@ -616,6 +662,11 @@ unset HISTFILE
 "#;
 
 const ZSH_HOOK: &str = r#"
+if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
+  set -a
+  . "$TUTORIAL_STEPPER_ENV"
+  set +a
+fi
 precmd() {
   local exit_status=$?
   print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
@@ -651,6 +702,13 @@ fn unique_suffix() -> String {
 
 fn sh_single(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn absolute(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir().map(|cwd| cwd.join(path)).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn complete_lines(text: &str) -> Vec<&str> {
@@ -710,6 +768,9 @@ fn write_transcript(path: &Path, entries: &[Entry]) -> Result<(), Failure> {
     let mut tables = ArrayOfTables::new();
     for entry in entries {
         let mut table = Table::new();
+        if let Some(path) = &entry.path {
+            table.insert("path", item_str(path));
+        }
         table.insert("page", item_str(&entry.page));
         table.insert("window", item_str(&entry.window));
         table.insert("block", item_int(i64::try_from(entry.line).unwrap_or(0)));

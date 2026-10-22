@@ -35,6 +35,7 @@ pub(crate) enum Shell {
 
 pub(crate) struct Setting {
     pub name: String,
+    pub default: String,
     pub values: Vec<String>,
 }
 
@@ -258,6 +259,7 @@ fn read_settings(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Se
             continue;
         };
         let values = read_words(table, "values", text, problems);
+        let mut default_value = String::new();
         if let Some(default) = required_word(table, "default", "default", text, problems) {
             if !values.is_empty() && !values.iter().any(|value| value == default.value) {
                 problems.push(at(
@@ -268,6 +270,7 @@ fn read_settings(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Se
                     ),
                 ));
             }
+            default_value = default.value.to_string();
         }
         if settings.iter().any(|setting| setting.name == name.value) {
             problems.push(at(
@@ -275,7 +278,7 @@ fn read_settings(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Se
                 format!("setting \"{}\" is declared more than once", name.value),
             ));
         } else {
-            settings.push(Setting { name: name.value.to_string(), values });
+            settings.push(Setting { name: name.value.to_string(), default: default_value, values });
         }
     }
     settings

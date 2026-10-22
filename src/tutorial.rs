@@ -38,8 +38,16 @@ pub(crate) fn script(dir: &Path, path: Option<&str>) -> u8 {
 }
 
 /// Play a tutorial in the shell its index declares. The value is the process exit code.
-pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup: bool) -> u8 {
-    play_as(dir, transcript, run, run_setup, None)
+/// `path` selects one tested path. Absent plays the tutorial once, and a block marked
+/// `if=` is refused.
+pub(crate) fn play(
+    dir: &Path,
+    transcript: &Path,
+    run: Option<&Path>,
+    run_setup: bool,
+    path: Option<&str>,
+) -> u8 {
+    play_as(dir, transcript, run, run_setup, None, path)
 }
 
 fn play_as(
@@ -48,15 +56,23 @@ fn play_as(
     run: Option<&Path>,
     run_setup: bool,
     user: Option<u32>,
+    path: Option<&str>,
 ) -> u8 {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return refuse(dir, &problems),
     };
-    if let Some(problem) = refuse_scope(&loaded, run_setup) {
+    if let Some(problem) = refuse_scope(&loaded, run_setup, path) {
         emit(dir, &problem);
         return 1;
     }
+    let selected = match path_values(&loaded.paths, path) {
+        Ok(values) => values,
+        Err(problem) => {
+            emit(dir, &problem);
+            return 1;
+        }
+    };
     if run_setup {
         if let Some((name, _)) = &loaded.setup {
             match supplied_user(user) {
@@ -87,14 +103,32 @@ fn play_as(
         .iter()
         .map(|window| (window.name.clone(), window.folder.clone()))
         .collect::<Vec<_>>();
+    let initial = windows.first().map(|(name, _)| name.as_str()).unwrap_or("");
+    let commands = resolve_commands(&loaded.runnables, selected.as_deref(), initial);
+    let chosen = match &selected {
+        Some(values) => values.clone(),
+        None => loaded
+            .settings
+            .iter()
+            .map(|setting| (setting.name.clone(), setting.default.clone()))
+            .collect(),
+    };
+    let environment = environment_text(&loaded.settings, &chosen);
     let setup = if run_setup {
         loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
     } else {
         None
     };
     let setup = setup.as_ref().map(|(name, path)| (name.as_str(), path.as_path()));
-    match crate::play::drive(transcript, &loaded.play_commands, &windows, run, setup, loaded.shell)
-    {
+    match crate::play::drive(
+        transcript,
+        &commands,
+        &windows,
+        run,
+        setup,
+        loaded.shell,
+        crate::play::DriveExtras { environment: environment.as_deref(), path },
+    ) {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -115,18 +149,26 @@ pub(crate) struct PlayCommand {
     pub expected: u8,
     /// Window this command runs in.
     pub window: String,
-    /// The fence carries `if=`, so this command chooses a setting.
-    pub chooses_setting: bool,
+}
+
+struct Runnable {
+    page: String,
+    line: usize,
+    body: String,
+    expected: u8,
+    declared_window: Option<String>,
+    setting: Option<(String, String)>,
 }
 
 struct Loaded {
     pages: usize,
     commands: usize,
     blocks: Vec<Block>,
-    play_commands: Vec<PlayCommand>,
+    runnables: Vec<Runnable>,
     shell: index::Shell,
     setup: Option<(String, usize)>,
     windows: Vec<index::Window>,
+    settings: Vec<index::Setting>,
     paths: Vec<index::TestedPath>,
 }
 
@@ -176,11 +218,7 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
     };
 
     let index::Tutorial { pages, windows, settings, paths, mut problems, shell, setup } = tutorial;
-    let mut read = Read {
-        blocks: Vec::new(),
-        play_commands: Vec::new(),
-        current_window: windows.first().map(|window| window.name.clone()).unwrap_or_default(),
-    };
+    let mut read = Read { blocks: Vec::new(), runnables: Vec::new() };
     let mut commands = 0_usize;
     for page in &pages {
         commands += read_page(dir, page, &windows, &settings, &mut problems, &mut read);
@@ -212,18 +250,18 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         pages: pages.len(),
         commands,
         blocks: read.blocks,
-        play_commands: read.play_commands,
+        runnables: read.runnables,
         shell,
         setup,
         windows,
+        settings,
         paths,
     })
 }
 
 struct Read {
     blocks: Vec<Block>,
-    play_commands: Vec<PlayCommand>,
-    current_window: String,
+    runnables: Vec<Runnable>,
 }
 
 fn read_page(
@@ -295,15 +333,13 @@ fn read_page(
         }
         if fence.mode.is_none() {
             commands += 1;
-            let window = fence.window.clone().unwrap_or_else(|| read.current_window.clone());
-            read.current_window.clone_from(&window);
-            read.play_commands.push(PlayCommand {
+            read.runnables.push(Runnable {
                 page: page.path.clone(),
                 line: fence.line,
                 body: fence.body.clone(),
                 expected: fence.status.unwrap_or(0),
-                window,
-                chooses_setting: fence.setting.is_some(),
+                declared_window: fence.window.clone(),
+                setting: fence.setting.clone(),
             });
         }
         read.blocks.push(Block {
@@ -467,24 +503,70 @@ fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
     std::env::current_dir().map(|cwd| cwd.join(joined)).unwrap_or(dir.join(relative))
 }
 
-fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
+fn refuse_scope(loaded: &Loaded, run_setup: bool, path: Option<&str>) -> Option<Problem> {
     if !run_setup {
-        if let Some((path, line)) = &loaded.setup {
+        if let Some((script, line)) = &loaded.setup {
             return Some(Problem {
                 relative: "tutorial.toml".to_string(),
                 line: *line,
-                message: format!("play stops before the set-up script {path}"),
+                message: format!("play stops before the set-up script {script}"),
             });
         }
     }
-    if let Some(command) = loaded.play_commands.iter().find(|command| command.chooses_setting) {
-        return Some(Problem {
-            relative: command.page.clone(),
-            line: command.line,
-            message: "play --auto does not choose a setting".to_string(),
-        });
+    if path.is_none() {
+        if let Some(command) = loaded.runnables.iter().find(|command| command.setting.is_some()) {
+            return Some(Problem {
+                relative: command.page.clone(),
+                line: command.line,
+                message: "play --auto does not choose a setting".to_string(),
+            });
+        }
     }
     None
+}
+
+fn resolve_commands(
+    commands: &[Runnable],
+    values: Option<&[(String, String)]>,
+    initial: &str,
+) -> Vec<PlayCommand> {
+    let mut current = initial.to_string();
+    let mut resolved = Vec::new();
+    for command in commands {
+        if !belongs(&command.setting, values) {
+            continue;
+        }
+        if let Some(window) = &command.declared_window {
+            current.clone_from(window);
+        }
+        resolved.push(PlayCommand {
+            page: command.page.clone(),
+            line: command.line,
+            body: command.body.clone(),
+            expected: command.expected,
+            window: current.clone(),
+        });
+    }
+    resolved
+}
+
+fn environment_text(settings: &[index::Setting], values: &[(String, String)]) -> Option<String> {
+    if settings.is_empty() {
+        return None;
+    }
+    let mut text = String::new();
+    for setting in settings {
+        let value = values
+            .iter()
+            .find(|(name, _)| name == &setting.name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or(setting.default.as_str());
+        text.push_str(&setting.name);
+        text.push('=');
+        text.push_str(value);
+        text.push('\n');
+    }
+    Some(text)
 }
 
 fn report(dir: &Path, failure: crate::play::Failure) -> u8 {
@@ -566,7 +648,7 @@ folder = \"bob\"
             .expect("the set-up script");
         let run = temp("root-setup-run");
         let transcript = root.join("transcript.toml");
-        let code = play_as(&root, &transcript, Some(&run), true, Some(0));
+        let code = play_as(&root, &transcript, Some(&run), true, Some(0), None);
         assert_eq!(code, 1, "play ran the set-up script as root");
         let message = super::setup_as_root_message("setup.sh");
         assert!(message.contains("setup.sh"), "{message}");
@@ -598,7 +680,7 @@ folder = \"bob\"
         fs::write(root.join("setup.sh"), format!("printf ran > {}\n", marker.display()))
             .expect("the set-up script");
         let transcript = root.join("transcript.toml");
-        let code = play_as(&root, &transcript, None, true, Some(1000));
+        let code = play_as(&root, &transcript, None, true, Some(1000), None);
         assert_eq!(code, 0, "a non-root user was refused");
         assert_eq!(fs::read_to_string(&marker).expect("the script wrote the marker"), "ran");
     }
