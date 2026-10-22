@@ -1,0 +1,6 @@
+shell = "fish"
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"

@@ -1,0 +1,5 @@
+pages = ["build.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"

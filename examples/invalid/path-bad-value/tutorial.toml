@@ -1,0 +1,14 @@
+pages = ["welcome.md"]
+
+[[window]]
+name = "bob"
+folder = "bob"
+
+[[setting]]
+name = "SIGNING"
+default = "external"
+values = ["external", "internal"]
+
+[[path]]
+name = "external"
+values = { SIGNING = "nope" }

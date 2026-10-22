@@ -1,0 +1,21 @@
+[package]
+name = "tutorial-stepper"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/lambdasistemi/tutorial-stepper"
+rust-version = "1.85"
+description = "Check a Markdown tutorial's format, and step its commands into real shells."
+publish = false
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+pulldown-cmark = { version = "0.13.5", default-features = false }
+toml_edit = { version = "0.22", default-features = false, features = ["parse"] }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"

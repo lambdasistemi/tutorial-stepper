@@ -1,0 +1,21 @@
+shell = "zsh"
+setup = "setup.sh"
+pages = ["sign.md"]
+
+[[window]]
+name = "alice"
+folder = "alice"
+needs = ["jq", "singular >= 0.14.0"]
+
+[[setting]]
+name = "SIGNING"
+default = "external"
+values = ["external", "internal"]
+
+[[path]]
+name = "external"
+values = { SIGNING = "external" }
+
+[[path]]
+name = "internal"
+values = { SIGNING = "internal" }
