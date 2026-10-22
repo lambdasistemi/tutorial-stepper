@@ -96,13 +96,13 @@ enum Command {
     /// Play a tutorial in the shell its index declares.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each command runs in the shell the index declares, bash when the index does not say. The transcript records the window, the command, its output, its status, and its start and end time. --path NAME plays that tested path. Without --path, every tested path plays from its own run folder, and the command exits 1 if any path fails. The values are written to .env in the run folder, and every window loads the file before its first command. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+        after_help = "Each command runs in the shell the index declares, bash when the index does not say. An observation runs where it appears and again at the end of the path. The transcript records each command and each observation run. --path NAME plays that tested path. Without --path, every tested path plays from its own run folder, and the command exits 1 if any path fails. The values are written to .env in the run folder, and every window loads the file before its first command. A sound tutorial prints how many commands played and exits 0. A block that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
     )]
     Play {
         /// Play the tutorial without stopping for a person.
         #[arg(long, required = true)]
         auto: bool,
-        /// File that receives one entry per command that ran.
+        /// File that receives one entry per command and per observation run.
         #[arg(long, value_name = "FILE", required = true)]
         transcript: PathBuf,
         /// Directory that keeps each window's folder. Removed at the end when absent.

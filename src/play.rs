@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
-use crate::tutorial::PlayCommand;
+use crate::tutorial::{PlayKind, PlayStep};
 
 /// What one run writes into the windows besides the commands.
 pub(crate) struct DriveExtras<'a> {
@@ -22,7 +22,7 @@ pub(crate) struct DriveExtras<'a> {
 /// Why a play stopped.
 #[derive(Debug)]
 pub(crate) enum Failure {
-    /// A command's status was not the one the block declares.
+    /// A block's status was not the one it declares.
     Status {
         /// Page path, as listed in the index.
         page: String,
@@ -34,6 +34,8 @@ pub(crate) enum Failure {
         got: u8,
         /// Status the block declares.
         expected: u8,
+        /// Command, observation where it appears, or observation at the end.
+        kind: PlayKind,
     },
     /// The programs, the shell, or the transcript could not be used.
     Report(String),
@@ -49,6 +51,8 @@ struct Entry {
     start: String,
     end: String,
     output: String,
+    kind: PlayKind,
+    position: Option<String>,
 }
 
 struct Pane {
@@ -72,13 +76,13 @@ struct Session {
     path_name: Option<String>,
 }
 
-/// Play `commands` in `windows` and write `transcript`. The count is how many ran.
+/// Play `steps` in `windows` and write `transcript`. The count is how many commands ran.
 /// Each window is a name and its folder relative to the run folder.
 /// `shell` is the shell the index declares.
 /// `extras.environment`, when present, is written to `.env` before any window opens.
 pub(crate) fn drive(
     transcript: &Path,
-    commands: &[PlayCommand],
+    steps: &[PlayStep],
     windows: &[(String, String)],
     run: Option<&Path>,
     setup: Option<(&str, &Path)>,
@@ -105,7 +109,7 @@ pub(crate) fn drive(
         run_setup(&bash, &session.run_dir, name, script)?;
     }
     session.start(&shell_path, shell)?;
-    session.run(commands, transcript)
+    session.run(steps, transcript)
 }
 
 /// Run the set-up script in the run folder, as the user who started play.
@@ -336,44 +340,61 @@ impl Session {
         Ok(())
     }
 
-    fn run(&self, commands: &[PlayCommand], transcript: &Path) -> Result<usize, Failure> {
+    fn run(&self, steps: &[PlayStep], transcript: &Path) -> Result<usize, Failure> {
         let mut entries = Vec::new();
-        for command in commands {
-            let index = self.pane_index(&command.window)?;
+        let mut commands_run = 0_usize;
+        let mut last_command: Option<(String, usize)> = None;
+        for step in steps {
+            let index = self.pane_index(&step.window)?;
             let log_from =
                 fs::metadata(&self.panes[index].log_path).map(|meta| meta.len()).unwrap_or(0);
             let status_from = complete_lines(&self.read_status(index)).len();
             let start = format_utc(SystemTime::now());
-            self.type_command(index, &command.body)?;
+            self.type_command(index, &step.body)?;
             self.wait_for_status_lines(index, status_from + 1)?;
             let end = format_utc(SystemTime::now());
             let got = self.latest_status(index)?;
             let output = self.capture_output(index, log_from)?;
-            let failed = got != command.expected;
+            let failed = got != step.expected;
+            let position = match step.kind {
+                PlayKind::Command => None,
+                PlayKind::Observation => Some(match &last_command {
+                    Some((page, line)) => format!("{page}:{line}"),
+                    None => "start of path".to_string(),
+                }),
+                PlayKind::ObservationAtEnd => Some("end of path".to_string()),
+            };
             entries.push(Entry {
                 path: self.path_name.clone(),
-                page: command.page.clone(),
-                line: command.line,
-                window: command.window.clone(),
-                command: command.body.clone(),
+                page: step.page.clone(),
+                line: step.line,
+                window: step.window.clone(),
+                command: step.body.clone(),
                 status: got,
                 start,
                 end,
                 output,
+                kind: step.kind,
+                position,
             });
+            if step.kind == PlayKind::Command {
+                commands_run += 1;
+                last_command = Some((step.page.clone(), step.line));
+            }
             if failed {
                 write_transcript(transcript, &entries)?;
                 return Err(Failure::Status {
-                    page: command.page.clone(),
-                    line: command.line,
-                    body: command.body.clone(),
+                    page: step.page.clone(),
+                    line: step.line,
+                    body: step.body.clone(),
                     got,
-                    expected: command.expected,
+                    expected: step.expected,
+                    kind: step.kind,
                 });
             }
         }
         write_transcript(transcript, &entries)?;
-        Ok(entries.len())
+        Ok(commands_run)
     }
 
     fn pane_index(&self, name: &str) -> Result<usize, Failure> {
@@ -765,30 +786,45 @@ fn write_transcript(path: &Path, entries: &[Entry]) -> Result<(), Failure> {
         return fs::write(path, "")
             .map_err(|error| Failure::Report(format!("cannot write the transcript: {error}\n")));
     }
-    let mut tables = ArrayOfTables::new();
+    let mut rendered = String::new();
     for entry in entries {
-        let mut table = Table::new();
-        if let Some(path) = &entry.path {
-            table.insert("path", item_str(path));
-        }
-        table.insert("page", item_str(&entry.page));
-        table.insert("window", item_str(&entry.window));
-        table.insert("block", item_int(i64::try_from(entry.line).unwrap_or(0)));
-        table.insert("command", item_str(&entry.command));
-        table.insert("status", item_int(i64::from(entry.status)));
-        table.insert("start", item_str(&entry.start));
-        table.insert("end", item_str(&entry.end));
-        table.insert("output", item_str(&entry.output));
-        tables.push(table);
+        rendered.push_str(&render_entry(entry));
     }
+    fs::write(path, rendered)
+        .map_err(|error| Failure::Report(format!("cannot write the transcript: {error}\n")))
+}
+
+/// One table. Tables are written one at a time so a command and an observation
+/// stay in the order they ran. One document would group every table of one key.
+fn render_entry(entry: &Entry) -> String {
+    let mut table = Table::new();
+    if let Some(path) = &entry.path {
+        table.insert("path", item_str(path));
+    }
+    table.insert("page", item_str(&entry.page));
+    table.insert("window", item_str(&entry.window));
+    table.insert("block", item_int(i64::try_from(entry.line).unwrap_or(0)));
+    table.insert("command", item_str(&entry.command));
+    table.insert("status", item_int(i64::from(entry.status)));
+    table.insert("start", item_str(&entry.start));
+    table.insert("end", item_str(&entry.end));
+    table.insert("output", item_str(&entry.output));
+    if let Some(position) = &entry.position {
+        table.insert("position", item_str(position));
+    }
+    let key = match entry.kind {
+        PlayKind::Command => "command",
+        PlayKind::Observation | PlayKind::ObservationAtEnd => "observation",
+    };
+    let mut tables = ArrayOfTables::new();
+    tables.push(table);
     let mut document = DocumentMut::new();
-    document.insert("command", Item::ArrayOfTables(tables));
+    document.insert(key, Item::ArrayOfTables(tables));
     let mut rendered = document.to_string();
     if !rendered.ends_with('\n') {
         rendered.push('\n');
     }
-    fs::write(path, rendered)
-        .map_err(|error| Failure::Report(format!("cannot write the transcript: {error}\n")))
+    rendered
 }
 
 fn item_str(text: &str) -> Item {

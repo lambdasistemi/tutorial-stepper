@@ -63,16 +63,33 @@ fn server_is_gone(pid: u32) {
 }
 
 fn transcript_commands(path: &Path) -> toml_edit::ArrayOfTables {
+    transcript_tables(path, "command")
+}
+
+fn transcript_observations(path: &Path) -> toml_edit::ArrayOfTables {
+    transcript_tables(path, "observation")
+}
+
+fn transcript_tables(path: &Path, key: &str) -> toml_edit::ArrayOfTables {
     let body = fs::read_to_string(path).expect("the transcript can be read");
     if body.trim().is_empty() {
         return toml_edit::ArrayOfTables::new();
     }
     let document: toml_edit::DocumentMut = body.parse().expect("the transcript is TOML");
     document
-        .get("command")
+        .get(key)
         .and_then(toml_edit::Item::as_array_of_tables)
-        .expect("the transcript is a list of commands")
-        .clone()
+        .cloned()
+        .unwrap_or_else(toml_edit::ArrayOfTables::new)
+}
+
+fn table_order(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .expect("the transcript can be read")
+        .lines()
+        .filter(|line| line.starts_with("[["))
+        .map(str::to_string)
+        .collect()
 }
 
 fn string_field(table: &toml_edit::Table, key: &str) -> String {
@@ -335,7 +352,7 @@ fn a_continued_command_is_one_entry() {
 }
 
 #[test]
-fn a_shown_block_and_an_observation_are_not_played() {
+fn an_observation_runs_where_it_appears_and_again_at_the_end() {
     let dir = manifest_dir().join("examples/mode");
     let transcript = temp_tutorial("mode-transcript").join("transcript.toml");
     fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
@@ -347,9 +364,302 @@ fn a_shown_block_and_an_observation_are_not_played() {
     let command = commands.get(0).expect("the command");
     assert_eq!(string_field(command, "command"), "echo run\n");
     assert_eq!(string_field(command, "output"), "run\n");
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 2, "{}", fs::read_to_string(&transcript).expect("transcript"));
+    assert_eq!(string_field(observations.get(0).expect("in place"), "command"), "echo observed\n");
+    assert_eq!(string_field(observations.get(0).expect("in place"), "output"), "observed\n");
+    assert_eq!(string_field(observations.get(0).expect("in place"), "position"), "start of path");
+    assert_eq!(block_field(observations.get(0).expect("in place")), 5);
+    assert_eq!(string_field(observations.get(1).expect("at the end"), "output"), "observed\n");
+    assert_eq!(string_field(observations.get(1).expect("at the end"), "position"), "end of path");
+    assert_eq!(
+        table_order(&transcript),
+        vec![
+            "[[observation]]".to_string(),
+            "[[command]]".to_string(),
+            "[[observation]]".to_string()
+        ]
+    );
     let body = fs::read_to_string(&transcript).expect("the transcript");
-    assert!(!body.contains("observed"), "{body}");
     assert!(!body.contains("shown"), "{body}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_observation_records_the_command_before_it_and_runs_again_at_the_end() {
+    let dir = manifest_dir().join("examples/observe");
+    let transcript = temp_tutorial("observe-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "2 commands played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(
+        string_field(commands.get(0).expect("the first command"), "command"),
+        "echo ready > note\n"
+    );
+    assert_eq!(block_field(commands.get(0).expect("the first command")), 1);
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 2, "{}", fs::read_to_string(&transcript).expect("transcript"));
+    let in_place = observations.get(0).expect("where it appears");
+    assert_eq!(string_field(in_place, "page"), "look.md");
+    assert_eq!(block_field(in_place), 5);
+    assert_eq!(string_field(in_place, "window"), "bob");
+    assert_eq!(string_field(in_place, "command"), "test -s note && echo seen\n");
+    assert_eq!(status_field(in_place), 0);
+    assert_eq!(string_field(in_place, "output"), "seen\n");
+    assert_eq!(string_field(in_place, "position"), "look.md:1");
+    assert!(in_place.get("path").is_none(), "a tutorial with no tested path wrote path");
+    let again = observations.get(1).expect("at the end");
+    assert_eq!(string_field(again, "output"), "seen\n");
+    assert_eq!(string_field(again, "position"), "end of path");
+    assert_eq!(status_field(again), 0);
+    assert_eq!(
+        table_order(&transcript),
+        vec![
+            "[[command]]".to_string(),
+            "[[observation]]".to_string(),
+            "[[command]]".to_string(),
+            "[[observation]]".to_string(),
+        ]
+    );
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_observation_that_fails_only_at_the_end_names_that_observation() {
+    let dir = manifest_dir().join("examples/observe-gone");
+    let transcript = temp_tutorial("observe-gone-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("look.md:5:"), "{err}");
+    assert!(err.contains("observation exited 1, expected 0, at the end of the path"), "{err}");
+    assert!(err.contains("test -s note && echo seen"), "{err}");
+    assert!(!err.contains("command exited"), "{err}");
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 2, "{}", fs::read_to_string(&transcript).expect("transcript"));
+    assert_eq!(string_field(observations.get(0).expect("in place"), "output"), "seen\n");
+    assert_eq!(string_field(observations.get(0).expect("in place"), "position"), "look.md:1");
+    assert_eq!(status_field(observations.get(0).expect("in place")), 0);
+    let again = observations.get(1).expect("at the end");
+    assert_eq!(string_field(again, "position"), "end of path");
+    assert_eq!(status_field(again), 1);
+    assert_eq!(string_field(again, "output"), "");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 2, "both commands ran before the end: {commands:?}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_observation_that_fails_where_it_appears_stops_the_path() {
+    let root = temp_tutorial("observe-stops");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob mode=observe }\nfalse\n```\n\n```bash { window=bob }\necho later > marker\n```\n",
+    );
+    let run = temp_tutorial("observe-stops-run");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) =
+        play_with(&root, &transcript, &["--run".to_string(), run.display().to_string()]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("observation exited 1, expected 0"), "{err}");
+    assert!(!err.contains("at the end of the path"), "{err}");
+    assert!(!run.join("bob").join("marker").exists(), "the later command ran");
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 1, "the end run should not have started");
+    assert_eq!(
+        string_field(observations.get(0).expect("the failure"), "position"),
+        "start of path"
+    );
+    assert!(transcript_commands(&transcript).is_empty(), "a later command was recorded");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_observation_uses_its_window_without_moving_the_next_command() {
+    let root = temp_tutorial("observe-window");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "\
+```bash { window=alice }
+pwd
+```
+
+```bash { mode=observe }
+pwd
+```
+
+```bash { }
+echo next
+```
+
+```bash { window=bob mode=observe }
+echo from-bob
+```
+",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(string_field(commands.get(0).expect("pwd"), "window"), "alice");
+    assert!(string_field(commands.get(0).expect("pwd"), "output").ends_with("alice\n"));
+    assert_eq!(string_field(commands.get(1).expect("next"), "window"), "alice");
+    assert_eq!(string_field(commands.get(1).expect("next"), "command"), "echo next\n");
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 4, "{}", fs::read_to_string(&transcript).expect("transcript"));
+    assert_eq!(string_field(observations.get(0).expect("inherited"), "window"), "alice");
+    assert!(string_field(observations.get(0).expect("inherited"), "output").ends_with("alice\n"));
+    assert_eq!(string_field(observations.get(1).expect("declared"), "window"), "bob");
+    assert_eq!(string_field(observations.get(1).expect("declared"), "output"), "from-bob\n");
+    assert_eq!(string_field(observations.get(2).expect("end inherited"), "window"), "alice");
+    assert_eq!(
+        string_field(observations.get(2).expect("end inherited"), "position"),
+        "end of path"
+    );
+    assert_eq!(string_field(observations.get(3).expect("end declared"), "window"), "bob");
+    assert_eq!(string_field(observations.get(3).expect("end declared"), "output"), "from-bob\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_observation_belongs_to_the_path_its_setting_names() {
+    let root = temp_tutorial("observe-path");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"KEEP\"
+default = \"yes\"
+values = [\"yes\", \"no\"]
+
+[[path]]
+name = \"kept\"
+values = { KEEP = \"yes\" }
+
+[[path]]
+name = \"removed\"
+values = { KEEP = \"no\" }
+",
+        "\
+```bash { window=bob }
+echo ready > note
+```
+
+```bash { window=bob mode=observe if=KEEP:yes }
+test -s note && echo seen
+```
+
+```bash { window=bob mode=observe if=KEEP:no }
+echo other
+```
+",
+    );
+    let kept_transcript = root.join("kept.toml");
+    let (kept, kept_pid) =
+        play_with(&root, &kept_transcript, &["--path".to_string(), "kept".to_string()]);
+    assert!(kept.status.success(), "stderr:\n{}", text(&kept.stderr));
+    let kept_observations = transcript_observations(&kept_transcript);
+    assert_eq!(
+        kept_observations.len(),
+        2,
+        "{}",
+        fs::read_to_string(&kept_transcript).expect("kept")
+    );
+    assert_eq!(string_field(kept_observations.get(0).expect("in place"), "output"), "seen\n");
+    assert_eq!(
+        string_field(kept_observations.get(0).expect("in place"), "position"),
+        "welcome.md:1"
+    );
+    assert_eq!(string_field(kept_observations.get(0).expect("in place"), "path"), "kept");
+    assert_eq!(
+        string_field(kept_observations.get(1).expect("at the end"), "position"),
+        "end of path"
+    );
+    assert_eq!(string_field(kept_observations.get(1).expect("at the end"), "path"), "kept");
+    let kept_body = fs::read_to_string(&kept_transcript).expect("kept");
+    assert!(!kept_body.contains("other"), "{kept_body}");
+    server_is_gone(kept_pid);
+
+    let removed_transcript = root.join("removed.toml");
+    let (removed, removed_pid) =
+        play_with(&root, &removed_transcript, &["--path".to_string(), "removed".to_string()]);
+    assert!(removed.status.success(), "stderr:\n{}", text(&removed.stderr));
+    let removed_observations = transcript_observations(&removed_transcript);
+    assert_eq!(removed_observations.len(), 2);
+    assert_eq!(string_field(removed_observations.get(0).expect("in place"), "output"), "other\n");
+    assert_eq!(
+        string_field(removed_observations.get(1).expect("at the end"), "position"),
+        "end of path"
+    );
+    let removed_body = fs::read_to_string(&removed_transcript).expect("removed");
+    assert!(!removed_body.contains("seen"), "{removed_body}");
+    server_is_gone(removed_pid);
+}
+
+#[test]
+fn an_observation_on_a_later_page_records_the_earlier_command() {
+    let root = temp_tutorial("observe-pages");
+    fs::create_dir_all(&root).expect("the tutorial directory");
+    fs::write(
+        root.join("tutorial.toml"),
+        "\
+pages = [\"welcome.md\", \"next.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+    )
+    .expect("the index");
+    fs::write(root.join("welcome.md"), "```bash { window=bob }\necho hi\n```\n")
+        .expect("the first page");
+    fs::write(
+        root.join("next.md"),
+        "```bash { window=bob mode=observe status=3 }\n(exit 3)\n```\n",
+    )
+    .expect("the second page");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let observations = transcript_observations(&transcript);
+    assert_eq!(observations.len(), 2, "{}", fs::read_to_string(&transcript).expect("transcript"));
+    assert_eq!(string_field(observations.get(0).expect("in place"), "page"), "next.md");
+    assert_eq!(string_field(observations.get(0).expect("in place"), "position"), "welcome.md:1");
+    assert_eq!(status_field(observations.get(0).expect("in place")), 3);
+    assert_eq!(string_field(observations.get(1).expect("at the end"), "position"), "end of path");
+    assert_eq!(status_field(observations.get(1).expect("at the end")), 3);
     server_is_gone(pid);
 }
 
@@ -849,6 +1159,8 @@ fn every_valid_example_plays_under_bash_and_zsh() {
         "setup",
         "settings",
         "needs-missing",
+        "observe",
+        "observe-gone",
     ];
     let mut seen = expected.to_vec();
     seen.sort_unstable();
@@ -871,6 +1183,7 @@ fn every_valid_example_plays_under_bash_and_zsh() {
         assert_eq!(bash.code, zsh.code, "{name} exit {:?} vs {:?}", bash.code, zsh.code);
         assert_eq!(bash.stdout, zsh.stdout, "{name} stdout");
         assert_eq!(bash.entries, zsh.entries, "{name} transcript");
+        assert_eq!(bash.observations, zsh.observations, "{name} observations");
         match name {
             "status" => {
                 assert!(bash.stderr.contains("echo not yet"), "{}", bash.stderr);
@@ -900,6 +1213,17 @@ fn every_valid_example_plays_under_bash_and_zsh() {
                 assert!(bash.elapsed >= 120, "{name} bash ended after {} seconds", bash.elapsed);
                 assert!(zsh.elapsed >= 120, "{name} zsh ended after {} seconds", zsh.elapsed);
             }
+            "observe-gone" => {
+                assert_eq!(bash.code, Some(1));
+                assert!(bash.stdout.is_empty(), "{}", bash.stdout);
+                for stderr in [&bash.stderr, &zsh.stderr] {
+                    assert!(
+                        stderr.contains("observation exited 1, expected 0, at the end of the path"),
+                        "{stderr}"
+                    );
+                    assert!(stderr.contains("test -s note"), "{stderr}");
+                }
+            }
             _ => {
                 assert!(bash.stderr.is_empty(), "{name} bash stderr:\n{}", bash.stderr);
                 assert!(zsh.stderr.is_empty(), "{name} zsh stderr:\n{}", zsh.stderr);
@@ -913,6 +1237,7 @@ struct Snapshot {
     stdout: String,
     stderr: String,
     entries: Vec<(String, String, i64, String, i64, String)>,
+    observations: Vec<(String, String, i64, String, i64, String, String)>,
     elapsed: i64,
 }
 
@@ -938,6 +1263,24 @@ fn snapshot(name: &str, shell: &str) -> Snapshot {
     } else {
         Vec::new()
     };
+    let observations = if transcript.exists() {
+        transcript_observations(&transcript)
+            .iter()
+            .map(|observation| {
+                (
+                    string_field(observation, "page"),
+                    string_field(observation, "window"),
+                    block_field(observation),
+                    string_field(observation, "command"),
+                    status_field(observation),
+                    comparable_output(&string_field(observation, "output")),
+                    string_field(observation, "position"),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let elapsed = if name == "slow" && transcript.exists() {
         let commands = transcript_commands(&transcript);
         let command = commands.get(0).expect("the sleep");
@@ -952,6 +1295,7 @@ fn snapshot(name: &str, shell: &str) -> Snapshot {
         stdout: text(&output.stdout),
         stderr: text(&output.stderr),
         entries,
+        observations,
         elapsed,
     }
 }
