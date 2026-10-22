@@ -692,7 +692,13 @@ fn comparable_output(output: &str) -> String {
 
 fn copy_with_shell(name: &str, shell: &str) -> PathBuf {
     let source = manifest_dir().join("examples").join(name);
-    let root = temp_tutorial(&format!("{name}-{shell}"));
+    // The both-shells sweep copies an example while another test copies
+    // the same one. A shared directory name is removed by the later copy.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let root = temp_tutorial(&format!("{name}-{shell}-{}-{nanos}", std::process::id()));
     copy_dir(&source, &root);
     force_shell(&root, shell);
     root
