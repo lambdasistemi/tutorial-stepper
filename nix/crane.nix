@@ -31,12 +31,13 @@ let
     strictDeps = true;
     pname = "tutorial-stepper";
     inherit version;
-    # The play tests start a tmux server and a bash with readline, and
-    # they ask `ps` whether that server exited. Those programs are
+    # The play tests start a tmux server and a bash or zsh, and they
+    # ask `ps` whether that server exited. Those programs are
     # build-time tools, not libraries the binary links.
     nativeBuildInputs = [
       pkgs.tmux
       pkgs.bashInteractive
+      pkgs.zsh
       pkgs.procps
     ];
     buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
