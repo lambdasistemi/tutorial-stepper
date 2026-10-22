@@ -44,10 +44,10 @@ Test first.
 
 ## Phase 5: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then `play --auto examples/settings --path careful` and the same command without `--path`.
-- [ ] `script examples/settings --path careful` prints only that path. `check` on an `if` that names an undeclared setting or value exits non-zero.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then `play --auto examples/settings --path careful` and the same command without `--path`.
+- [x] `script examples/settings --path careful` prints only that path. `check` on an `if` that names an undeclared setting or value exits non-zero.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
