@@ -1,2 +1,7 @@
 # Investigation notes (local only)
 .llm/
+
+# Cargo and Nix build products
+target/
+result
+result-*
