@@ -17,7 +17,10 @@ they fold away and only the commands remain to step through.
 **A tutorial author** writes plain Markdown, with the commands in ordinary code blocks, declares the
 settings and which combinations of them are tested, and gets three things from one source: the
 tutorial their learners play locally, an unattended run of each tested combination that fails in CI
-when the tutorial stops working, and a Killercoda scenario per tested combination.
+when the tutorial stops working, and a Killercoda scenario per tested combination. From the same
+source, `tutorial-stepper script` prints one bash script, each command named with its page and its
+window, for reading, diffing, and a quick run outside the stepper.
+[paolino/runmd](https://github.com/paolino/runmd) is superseded by `tutorial-stepper script`.
 
 ```mermaid
 flowchart LR
@@ -27,12 +30,14 @@ flowchart LR
   page["Terminal face: the page beside the window"]
   ci["Unattended run: exit status and transcript"]
   killercoda["Killercoda scenario"]
+  printed["One bash script of the commands"]
   source -->|"read by"| stepper
   stepper -->|"types commands into"| shells
   shells -->|"prompt hook reports end and status"| stepper
   stepper -->|"drives"| page
   stepper -->|"drives"| ci
   source -->|"rendered to"| killercoda
+  source -->|"printed as"| printed
 ```
 
 ## What a step looks like
@@ -52,8 +57,10 @@ GitHub, Pandoc and MkDocs show this as an ordinary bash block.
 ## Status
 
 `tutorial-stepper check` reads a tutorial directory and reports format problems.
-Version 0 of that format is [docs/format.md](docs/format.md). Playing a tutorial
-is not built yet. The principles every change follows are in the
+`tutorial-stepper script` prints its runnable commands as one bash script.
+[paolino/runmd](https://github.com/paolino/runmd) is superseded by that command.
+Version 0 of the format is [docs/format.md](docs/format.md), and the script
+command is [docs/script.md](docs/script.md). Playing a tutorial is not built yet. The principles every change follows are in the
 [constitution](.specify/memory/constitution.md). The first consumer is the
 [Singular demo](https://github.com/lambdasistemi/singular-demo), whose terminal tutorial this project
 replaces.

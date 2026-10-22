@@ -1,4 +1,4 @@
-//! Check a tutorial's format, and step its commands into real shells.
+//! Check a tutorial's format, print its commands as one script, and step them into real shells.
 
 pub mod fence;
 
@@ -36,6 +36,7 @@ pub fn run() -> u8 {
     match Cli::try_parse_from(argv) {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
+            Command::Script { dir } => script(&dir),
         },
         Err(err) => {
             let code = err.exit_code();
@@ -56,9 +57,9 @@ fn print_overview() {
     version = VERSION_SUFFIX,
     long_version = VERSION_SUFFIX,
     before_help = IDENTITY,
-    about = "Check a tutorial's format, and step its commands into real shells.",
+    about = "Check a tutorial's format, print its commands as one script, and step them into real shells.",
     disable_help_subcommand = true,
-    after_help = "Run `tutorial-stepper check --help` for help on that command."
+    after_help = "Run `tutorial-stepper check --help` for help on that command.\nRun `tutorial-stepper script --help` for help on that command."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -76,8 +77,21 @@ enum Command {
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
+    /// Print the runnable commands as one bash script.
+    #[command(
+        before_help = IDENTITY,
+        after_help = "Each runnable command is preceded by a comment naming its page and its window. A block marked mode=show is left out. An observation is included where it appears. A sound tutorial prints the script and exits 0. Each problem is printed as FILE:LINE: message and the command exits 1, with nothing on standard output. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper script examples/one-window"
+    )]
+    Script {
+        /// Tutorial directory: an index file and one Markdown page per step.
+        dir: PathBuf,
+    },
 }
 
 fn check(dir: &std::path::Path) -> u8 {
     tutorial::check(dir)
+}
+
+fn script(dir: &std::path::Path) -> u8 {
+    tutorial::script(dir)
 }

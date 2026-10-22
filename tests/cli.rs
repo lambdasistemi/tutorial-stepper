@@ -39,9 +39,14 @@ fn no_arguments_prints_a_one_screen_overview() {
         "overview did not open with the identity: {first:?}"
     );
     assert!(text.contains("check"), "overview did not name the check command:\n{text}");
+    assert!(text.contains("script"), "overview did not name the script command:\n{text}");
     assert!(
         text.contains("tutorial-stepper check --help"),
         "overview did not say how to get help on a command:\n{text}"
+    );
+    assert!(
+        text.contains("tutorial-stepper script --help"),
+        "overview did not say how to get help on the script command:\n{text}"
     );
     let lines = text.lines().count();
     assert!(lines <= 24, "overview is {lines} lines, which is more than one screen:\n{text}");
@@ -69,6 +74,43 @@ fn a_mistyped_command_is_a_short_error() {
     assert_eq!(output.status.code(), Some(2), "stderr:\n{}", stderr(&output));
     let text = stderr(&output);
     assert!(text.contains("chek"), "the error did not repeat the unknown command:\n{text}");
+    let lines = text.lines().count();
+    assert!(lines <= 8, "error is {lines} lines:\n{text}");
+}
+
+#[test]
+fn script_help_describes_that_command_only() {
+    let output = run(&["script", "--help"]);
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("<DIR>"), "script help did not name the directory:\n{text}");
+    assert!(
+        text.contains("mode=show"),
+        "script help did not say that a shown block is left out:\n{text}"
+    );
+    assert!(
+        text.contains("observation"),
+        "script help did not say that an observation is included:\n{text}"
+    );
+    assert!(
+        text.contains("FILE:LINE: message"),
+        "script help did not say how problems are printed:\n{text}"
+    );
+    assert!(text.contains("tutorial-stepper script"), "script help had no example:\n{text}");
+    assert!(!text.contains("Commands:"), "script help listed other commands:\n{text}");
+    let lines = text.lines().count();
+    assert!(lines <= 40, "script help is {lines} lines:\n{text}");
+}
+
+#[test]
+fn script_without_a_directory_is_a_short_error() {
+    let output = run(&["script"]);
+    assert_eq!(output.status.code(), Some(2), "stderr:\n{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(
+        text.contains("DIR") || text.contains("dir"),
+        "the error did not name the missing directory:\n{text}"
+    );
     let lines = text.lines().count();
     assert!(lines <= 8, "error is {lines} lines:\n{text}");
 }

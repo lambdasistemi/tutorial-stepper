@@ -24,6 +24,8 @@ pub struct AttributedFence {
     pub mode: Option<Mode>,
     /// `if`, the setting name and the value, when the fence sets it.
     pub setting: Option<(String, String)>,
+    /// The fence body, without the opening or closing fence.
+    pub body: String,
 }
 
 /// A fence whose info string is not `lang { key=value }`.
@@ -44,18 +46,33 @@ pub fn fence_attributes(markdown: &str) -> (Vec<AttributedFence>, Vec<FenceError
     let parser = pulldown_cmark::Parser::new(markdown);
     let mut fences = Vec::new();
     let mut errors = Vec::new();
+    let mut open: Option<AttributedFence> = None;
     for (event, range) in parser.into_offset_iter() {
-        let pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(kind)) = event else {
-            continue;
-        };
-        let pulldown_cmark::CodeBlockKind::Fenced(info) = kind else {
-            continue;
-        };
-        let line = line_number(markdown, range.start);
-        match parse_info(&info, line) {
-            Ok(Some(fence)) => fences.push(fence),
-            Ok(None) => {}
-            Err(error) => errors.push(error),
+        match event {
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(kind)) => {
+                let pulldown_cmark::CodeBlockKind::Fenced(info) = kind else {
+                    continue;
+                };
+                let line = line_number(markdown, range.start);
+                open = match parse_info(&info, line) {
+                    Ok(fence) => fence,
+                    Err(error) => {
+                        errors.push(error);
+                        None
+                    }
+                };
+            }
+            pulldown_cmark::Event::Text(text) => {
+                if let Some(fence) = open.as_mut() {
+                    fence.body.push_str(&text);
+                }
+            }
+            pulldown_cmark::Event::End(pulldown_cmark::TagEnd::CodeBlock) => {
+                if let Some(fence) = open.take() {
+                    fences.push(fence);
+                }
+            }
+            _ => {}
         }
     }
     (fences, errors)
@@ -113,6 +130,7 @@ fn parse_info(info: &str, line: usize) -> Result<Option<AttributedFence>, FenceE
         status: None,
         mode: None,
         setting: None,
+        body: String::new(),
     };
     if inside.is_empty() {
         return Ok(Some(fence));

@@ -1,4 +1,4 @@
-//! Read a tutorial directory and report format problems.
+//! Read a tutorial directory, report format problems, and print its commands.
 
 use std::fs;
 use std::path::Path;
@@ -6,41 +6,85 @@ use std::path::Path;
 use crate::index::{self, Problem};
 
 pub(crate) fn check(dir: &Path) -> u8 {
+    match load(dir) {
+        Ok(loaded) => {
+            println!(
+                "{}, {}",
+                counted(loaded.pages, "page", "pages"),
+                counted(loaded.commands, "command", "commands")
+            );
+            0
+        }
+        Err(problems) => refuse(dir, &problems),
+    }
+}
+
+/// Print the runnable commands as one bash script. The value is the process exit code.
+pub(crate) fn script(dir: &Path) -> u8 {
+    match load(dir) {
+        Ok(loaded) => {
+            print!("{}", render(&loaded.blocks));
+            0
+        }
+        Err(problems) => refuse(dir, &problems),
+    }
+}
+
+struct Loaded {
+    pages: usize,
+    commands: usize,
+    blocks: Vec<Block>,
+}
+
+struct Block {
+    page: String,
+    window: Option<String>,
+    body: String,
+}
+
+fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
     if !dir.is_dir() {
         let message = if dir.exists() {
             "tutorial directory is not a directory"
         } else {
             "tutorial directory is missing"
         };
-        eprintln!("{}:1: {message}", dir.display());
-        return 1;
+        return Err(vec![Problem {
+            relative: String::new(),
+            line: 1,
+            message: message.to_string(),
+        }]);
     }
 
     let index_path = dir.join("tutorial.toml");
     let text = match fs::read_to_string(&index_path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("{}:1: tutorial.toml is missing", index_path.display());
-            return 1;
+            return Err(vec![Problem {
+                relative: "tutorial.toml".to_string(),
+                line: 1,
+                message: "tutorial.toml is missing".to_string(),
+            }]);
         }
         Err(_) => {
-            eprintln!("{}:1: cannot read tutorial.toml", index_path.display());
-            return 1;
+            return Err(vec![Problem {
+                relative: "tutorial.toml".to_string(),
+                line: 1,
+                message: "cannot read tutorial.toml".to_string(),
+            }]);
         }
     };
 
     let tutorial = match index::parse(&text) {
         Ok(tutorial) => tutorial,
-        Err(problem) => {
-            emit(dir, &problem);
-            return 1;
-        }
+        Err(problem) => return Err(vec![problem]),
     };
 
     let index::Tutorial { pages, windows, settings, mut problems } = tutorial;
     let mut commands = 0_usize;
+    let mut blocks = Vec::new();
     for page in &pages {
-        commands += check_page(dir, page, &windows, &settings, &mut problems);
+        commands += read_page(dir, page, &windows, &settings, &mut problems, &mut blocks);
     }
     match markdown_pages(dir) {
         Ok(found) => {
@@ -63,26 +107,18 @@ pub(crate) fn check(dir: &Path) -> u8 {
     }
 
     if !problems.is_empty() {
-        for problem in &problems {
-            emit(dir, problem);
-        }
-        return 1;
+        return Err(problems);
     }
-
-    println!(
-        "{}, {}",
-        counted(pages.len(), "page", "pages"),
-        counted(commands, "command", "commands")
-    );
-    0
+    Ok(Loaded { pages: pages.len(), commands, blocks })
 }
 
-fn check_page(
+fn read_page(
     dir: &Path,
     page: &index::Page,
     windows: &[index::Window],
     settings: &[index::Setting],
     problems: &mut Vec<Problem>,
+    blocks: &mut Vec<Block>,
 ) -> usize {
     let path = dir.join(&page.path);
     if !path.is_file() {
@@ -140,11 +176,52 @@ fn check_page(
                 Some(_) => {}
             }
         }
+        if fence.mode == Some(crate::fence::Mode::Show) {
+            continue;
+        }
         if fence.mode.is_none() {
             commands += 1;
         }
+        blocks.push(Block {
+            page: page.path.clone(),
+            window: fence.window.clone(),
+            body: fence.body.clone(),
+        });
     }
     commands
+}
+
+fn render(blocks: &[Block]) -> String {
+    let mut out = String::from("#!/usr/bin/env bash\n");
+    for block in blocks {
+        out.push('\n');
+        match &block.window {
+            Some(window) => {
+                out.push_str("# ");
+                out.push_str(&block.page);
+                out.push_str(", window ");
+                out.push_str(window);
+                out.push('\n');
+            }
+            None => {
+                out.push_str("# ");
+                out.push_str(&block.page);
+                out.push_str(", window not named\n");
+            }
+        }
+        out.push_str(&block.body);
+        if !block.body.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn refuse(dir: &Path, problems: &[Problem]) -> u8 {
+    for problem in problems {
+        emit(dir, problem);
+    }
+    1
 }
 
 fn markdown_pages(dir: &Path) -> Result<Vec<String>, ()> {
