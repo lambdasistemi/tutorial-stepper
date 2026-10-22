@@ -37,10 +37,10 @@ The operator chose `tutorial.toml`. The specification records the contents.
 
 ## Phase 5: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then `tutorial-stepper check` on each example, exit 0 for the valid ones and non-zero with `FILE:LINE: message` for the invalid ones.
-- [ ] `actionlint` clean on the workflow files.
-- [ ] The documentation presentation check clean on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then `tutorial-stepper check` on each example, exit 0 for the valid ones and non-zero with `FILE:LINE: message` for the invalid ones.
+- [x] `actionlint` clean on the workflow files.
+- [x] The documentation presentation check clean on `README.md` and `docs/`.
 
 ## Dependencies
 
