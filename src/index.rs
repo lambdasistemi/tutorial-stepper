@@ -18,6 +18,13 @@ pub(crate) struct Page {
 
 pub(crate) struct Window {
     pub name: String,
+    pub folder: String,
+    pub line: usize,
+}
+
+pub(crate) enum Shell {
+    Bash,
+    Zsh,
 }
 
 pub(crate) struct Setting {
@@ -30,6 +37,9 @@ pub(crate) struct Tutorial {
     pub windows: Vec<Window>,
     pub settings: Vec<Setting>,
     pub problems: Vec<Problem>,
+    pub shell: Shell,
+    pub shell_line: Option<usize>,
+    pub setup: Option<(String, usize)>,
 }
 
 struct Located<'a> {
@@ -57,6 +67,9 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
     let mut settings = Vec::new();
     let mut raw_paths = Vec::new();
     let mut saw_pages = false;
+    let mut shell = Shell::Bash;
+    let mut shell_line = None;
+    let mut setup = None;
 
     for (key_name, item) in document.iter() {
         if item.is_none() {
@@ -64,8 +77,17 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
         }
         let key_span = document.key(key_name).and_then(toml_edit::Key::span);
         match key_name {
-            "shell" => check_shell(item, text, &mut problems),
-            "setup" => check_setup(item, text, &mut problems),
+            "shell" => {
+                if let Some((found, line)) = read_shell(item, text, &mut problems) {
+                    shell = found;
+                    shell_line = Some(line);
+                }
+            }
+            "setup" => {
+                if let Some(found) = read_setup(item, text, &mut problems) {
+                    setup = Some(found);
+                }
+            }
             "pages" => {
                 saw_pages = true;
                 pages = read_pages(item, text, &mut problems);
@@ -93,25 +115,28 @@ pub(crate) fn parse(text: &str) -> Result<Tutorial, Problem> {
         ));
     }
 
-    Ok(Tutorial { pages, windows, settings, problems })
+    Ok(Tutorial { pages, windows, settings, problems, shell, shell_line, setup })
 }
 
-fn check_shell(item: &Item, text: &str, problems: &mut Vec<Problem>) {
-    let Some(located) = read_string(item, text, "shell", problems) else {
-        return;
-    };
-    if located.value != "bash" && located.value != "zsh" {
-        problems.push(at(located.line, "shell must be bash or zsh".to_string()));
+fn read_shell(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Option<(Shell, usize)> {
+    let located = read_string(item, text, "shell", problems)?;
+    match located.value {
+        "bash" => Some((Shell::Bash, located.line)),
+        "zsh" => Some((Shell::Zsh, located.line)),
+        _ => {
+            problems.push(at(located.line, "shell must be bash or zsh".to_string()));
+            None
+        }
     }
 }
 
-fn check_setup(item: &Item, text: &str, problems: &mut Vec<Problem>) {
-    let Some(located) = read_string(item, text, "setup", problems) else {
-        return;
-    };
+fn read_setup(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Option<(String, usize)> {
+    let located = read_string(item, text, "setup", problems)?;
     if !is_relative_path(located.value) {
         problems.push(at(located.line, "setup must be a relative path".to_string()));
+        return None;
     }
+    Some((located.value.to_string(), located.line))
 }
 
 fn read_pages(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Page> {
@@ -170,26 +195,27 @@ fn read_windows(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Win
         let Some(name) = required_word(table, "name", "window name", text, problems) else {
             continue;
         };
+        let folder = match table.get("folder") {
+            None => {
+                problems.push(index_problem(text, table.span(), "folder is required".to_string()));
+                String::new()
+            }
+            Some(folder) => match read_string(folder, text, "folder", problems) {
+                Some(located) if is_relative_path(located.value) => located.value.to_string(),
+                Some(located) => {
+                    problems.push(at(located.line, "folder must be a relative path".to_string()));
+                    String::new()
+                }
+                None => String::new(),
+            },
+        };
         if windows.iter().any(|window| window.name == name.value) {
             problems.push(at(
                 name.line,
                 format!("window \"{}\" is declared more than once", name.value),
             ));
         } else {
-            windows.push(Window { name: name.value.to_string() });
-        }
-        match table.get("folder") {
-            None => {
-                problems.push(index_problem(text, table.span(), "folder is required".to_string()))
-            }
-            Some(folder) => {
-                if let Some(located) = read_string(folder, text, "folder", problems) {
-                    if !is_relative_path(located.value) {
-                        problems
-                            .push(at(located.line, "folder must be a relative path".to_string()));
-                    }
-                }
-            }
+            windows.push(Window { name: name.value.to_string(), folder, line: name.line });
         }
         if let Some(needs) = table.get("needs") {
             check_needs(needs, text, problems);

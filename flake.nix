@@ -55,6 +55,9 @@
           packages = [
             pkgs.just
             pkgs.cargo-deny
+            pkgs.tmux
+            pkgs.bashInteractive
+            pkgs.procps
           ];
           env = {
             TUTORIAL_STEPPER_VERSION = craneEnv.version;

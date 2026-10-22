@@ -3,6 +3,7 @@
 pub mod fence;
 
 mod index;
+mod play;
 mod tutorial;
 
 use std::path::PathBuf;
@@ -37,6 +38,7 @@ pub fn run() -> u8 {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
             Command::Script { dir } => script(&dir),
+            Command::Play { auto: _, dir, transcript } => play(&dir, &transcript),
         },
         Err(err) => {
             let code = err.exit_code();
@@ -59,7 +61,7 @@ fn print_overview() {
     before_help = IDENTITY,
     about = "Check a tutorial's format, print its commands as one script, and step them into real shells.",
     disable_help_subcommand = true,
-    after_help = "Run `tutorial-stepper check --help` for help on that command.\nRun `tutorial-stepper script --help` for help on that command."
+    after_help = "Run `tutorial-stepper check --help` for help on that command.\nRun `tutorial-stepper script --help` for help on that command.\nRun `tutorial-stepper play --help` for help on that command."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -86,6 +88,21 @@ enum Command {
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
+    /// Play a one-window tutorial in a bash shell.
+    #[command(
+        before_help = IDENTITY,
+        after_help = "Each command runs in one bash shell. The transcript records the command, its output, its status, and its start and end time. A sound tutorial prints how many commands played and exits 0. A command that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+    )]
+    Play {
+        /// Play the tutorial without stopping for a person.
+        #[arg(long, required = true)]
+        auto: bool,
+        /// File that receives one entry per command that ran.
+        #[arg(long, value_name = "FILE", required = true)]
+        transcript: PathBuf,
+        /// Tutorial directory: an index file and one Markdown page per step.
+        dir: PathBuf,
+    },
 }
 
 fn check(dir: &std::path::Path) -> u8 {
@@ -94,4 +111,8 @@ fn check(dir: &std::path::Path) -> u8 {
 
 fn script(dir: &std::path::Path) -> u8 {
     tutorial::script(dir)
+}
+
+fn play(dir: &std::path::Path, transcript: &std::path::Path) -> u8 {
+    tutorial::play(dir, transcript)
 }

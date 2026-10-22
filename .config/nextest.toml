@@ -1,0 +1,5 @@
+# The default slow-timeout kills a test at about 120 seconds. One play
+# waits out a command that sleeps that long, so it needs a longer period.
+[[profile.default.overrides]]
+filter = "test(a_command_that_sleeps_120_seconds_passes)"
+slow-timeout = { period = "180s", terminate-after = 1 }
