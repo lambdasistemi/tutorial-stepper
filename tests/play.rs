@@ -1,0 +1,391 @@
+//! `tutorial-stepper play --auto` on a one-window bash tutorial.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8(bytes.to_vec()).expect("the tutorial-stepper output is utf-8")
+}
+
+fn play(dir: &Path, transcript: &Path) -> (Output, u32) {
+    let child = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .args(["play", "--auto", "--transcript"])
+        .arg(transcript)
+        .arg(dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the tutorial-stepper binary runs");
+    let pid = child.id();
+    let output = child.wait_with_output().expect("the play command finishes");
+    (output, pid)
+}
+
+fn server_is_gone(pid: u32) {
+    let needle = format!("tutorial-stepper-{pid}-");
+    for _ in 0..40 {
+        let ps = Command::new("ps").args(["-eo", "args"]).output().expect("ps runs");
+        if !text(&ps.stdout).contains(&needle) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let ps = Command::new("ps").args(["-eo", "args"]).output().expect("ps runs");
+    panic!("a tmux server named {needle} is still running:\n{}", text(&ps.stdout));
+}
+
+fn transcript_commands(path: &Path) -> toml_edit::ArrayOfTables {
+    let body = fs::read_to_string(path).expect("the transcript can be read");
+    if body.trim().is_empty() {
+        return toml_edit::ArrayOfTables::new();
+    }
+    let document: toml_edit::DocumentMut = body.parse().expect("the transcript is TOML");
+    document
+        .get("command")
+        .and_then(toml_edit::Item::as_array_of_tables)
+        .expect("the transcript is a list of commands")
+        .clone()
+}
+
+fn string_field(table: &toml_edit::Table, key: &str) -> String {
+    table
+        .get(key)
+        .and_then(toml_edit::Item::as_str)
+        .unwrap_or_else(|| panic!("{key} is a string, table was {table:?}"))
+        .to_string()
+}
+
+fn status_field(table: &toml_edit::Table) -> i64 {
+    table
+        .get("status")
+        .and_then(toml_edit::Item::as_integer)
+        .unwrap_or_else(|| panic!("status is an integer, table was {table:?}"))
+}
+
+fn block_field(table: &toml_edit::Table) -> i64 {
+    table
+        .get("block")
+        .and_then(toml_edit::Item::as_integer)
+        .unwrap_or_else(|| panic!("block is an integer, table was {table:?}"))
+}
+
+fn epoch_seconds(stamp: &str) -> i64 {
+    let output = Command::new("date")
+        .args(["-u", "-d", stamp, "+%s"])
+        .output()
+        .expect("date reads a timestamp");
+    assert!(output.status.success(), "date rejected {stamp}: {}", text(&output.stderr));
+    text(&output.stdout).trim().parse().expect("date prints seconds")
+}
+
+fn write_tutorial(root: &Path, index: &str, page: &str) {
+    fs::create_dir_all(root).expect("the temporary tutorial directory");
+    fs::write(root.join("tutorial.toml"), index).expect("the index is written");
+    fs::write(root.join("welcome.md"), page).expect("the page is written");
+}
+
+fn temp_tutorial(name: &str) -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = fs::remove_dir_all(&root);
+    root
+}
+
+#[test]
+fn one_window_records_the_command_its_output_and_its_status() {
+    let dir = manifest_dir().join("examples/one-window");
+    let transcript = temp_tutorial("one-window-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert!(output.stderr.is_empty(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the one command");
+    assert_eq!(string_field(command, "page"), "welcome.md");
+    assert_eq!(block_field(command), 1);
+    assert_eq!(string_field(command, "command"), "echo hi\n");
+    assert_eq!(status_field(command), 0);
+    assert_eq!(string_field(command, "output"), "hi\n");
+    let start = string_field(command, "start");
+    let end = string_field(command, "end");
+    assert!(start <= end, "start {start} is after end {end}");
+    assert_eq!(start.len(), 30, "{start}");
+    assert!(start.ends_with('Z') && end.ends_with('Z'));
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_declared_status_that_does_not_match_names_the_command() {
+    let dir = manifest_dir().join("examples/status");
+    let transcript = temp_tutorial("status-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    let page = dir.join("build.md");
+    assert!(err.starts_with(&format!("{}:1:", page.display())), "{err}");
+    assert!(err.contains("echo not yet"), "{err}");
+    assert!(err.contains("exited 0"), "{err}");
+    assert!(err.contains("expected 19"), "{err}");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the failing command");
+    assert_eq!(string_field(command, "command"), "echo not yet\n");
+    assert_eq!(status_field(command), 0);
+    assert_eq!(string_field(command, "output"), "not yet\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_declared_status_of_19_passes_when_the_command_exits_19() {
+    let dir = manifest_dir().join("examples/declared-status");
+    let transcript = temp_tutorial("declared-status-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1);
+    let command = commands.get(0).expect("the command");
+    assert_eq!(string_field(command, "command"), "(exit 19)\n");
+    assert_eq!(status_field(command), 19);
+    assert_eq!(string_field(command, "output"), "");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_continued_command_is_one_entry() {
+    let dir = manifest_dir().join("examples/continued");
+    let transcript = temp_tutorial("continued-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the continued command");
+    assert_eq!(string_field(command, "command"), "echo hello \\\nworld\n");
+    assert_eq!(status_field(command), 0);
+    assert_eq!(string_field(command, "output"), "hello world\n");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_shown_block_and_an_observation_are_not_played() {
+    let dir = manifest_dir().join("examples/mode");
+    let transcript = temp_tutorial("mode-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "1 command played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the command");
+    assert_eq!(string_field(command, "command"), "echo run\n");
+    assert_eq!(string_field(command, "output"), "run\n");
+    let body = fs::read_to_string(&transcript).expect("the transcript");
+    assert!(!body.contains("observed"), "{body}");
+    assert!(!body.contains("shown"), "{body}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_command_that_sleeps_120_seconds_passes() {
+    let dir = manifest_dir().join("examples/slow");
+    let transcript = temp_tutorial("slow-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 1, "{commands:?}");
+    let command = commands.get(0).expect("the sleep");
+    assert_eq!(status_field(command), 0);
+    let elapsed = epoch_seconds(&string_field(command, "end"))
+        - epoch_seconds(&string_field(command, "start"));
+    assert!(elapsed >= 120, "the run ended after {elapsed} seconds");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_broken_tutorial_prints_the_same_problems_and_writes_no_transcript() {
+    let dir = manifest_dir().join("examples/invalid/missing-index");
+    let transcript = temp_tutorial("missing-index-transcript").join("transcript.toml");
+    let checked = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .arg("check")
+        .arg(&dir)
+        .output()
+        .expect("check runs");
+    let (output, pid) = play(&dir, &transcript);
+    assert_eq!(output.status.code(), checked.status.code());
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    assert_eq!(text(&output.stderr), text(&checked.stderr));
+    assert!(!transcript.exists(), "a refused tutorial wrote a transcript");
+    server_is_gone(pid);
+}
+
+#[test]
+fn zsh_several_windows_a_setup_script_and_a_setting_are_refused() {
+    let zsh = manifest_dir().join("examples/if");
+    let zsh_transcript = temp_tutorial("zsh-transcript").join("transcript.toml");
+    let (output, pid) = play(&zsh, &zsh_transcript);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("bash") && err.contains("zsh"), "{err}");
+    assert!(!zsh_transcript.exists());
+    server_is_gone(pid);
+
+    let windows = temp_tutorial("two-windows");
+    write_tutorial(
+        &windows,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=alice }\necho hi\n```\n",
+    );
+    let windows_transcript = windows.join("transcript.toml");
+    let (output, pid) = play(&windows, &windows_transcript);
+    assert_eq!(output.status.code(), Some(1));
+    let err = text(&output.stderr);
+    assert!(err.contains("one window"), "{err}");
+    assert!(err.contains("alice") && err.contains("bob"), "{err}");
+    assert!(!windows_transcript.exists());
+    server_is_gone(pid);
+
+    let setup = temp_tutorial("setup-script");
+    write_tutorial(
+        &setup,
+        "\
+setup = \"setup.sh\"
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let setup_transcript = setup.join("transcript.toml");
+    let (output, pid) = play(&setup, &setup_transcript);
+    assert_eq!(output.status.code(), Some(1));
+    let err = text(&output.stderr);
+    assert!(err.contains("setup.sh"), "{err}");
+    assert!(!setup_transcript.exists());
+    server_is_gone(pid);
+
+    let setting = temp_tutorial("setting-branch");
+    write_tutorial(
+        &setting,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+",
+        "```bash { window=bob if=SIGNING:external }\necho external\n```\n",
+    );
+    let setting_transcript = setting.join("transcript.toml");
+    let (output, pid) = play(&setting, &setting_transcript);
+    assert_eq!(output.status.code(), Some(1));
+    let err = text(&output.stderr);
+    assert!(err.contains("setting"), "{err}");
+    assert!(!setting_transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn the_shell_starts_in_the_window_folder() {
+    let root = temp_tutorial("window-folder");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\npwd\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    let command = commands.get(0).expect("pwd");
+    let got = string_field(command, "output");
+    assert!(got.trim_end().ends_with("/bob"), "working directory was {got:?}");
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_missing_tmux_or_bash_is_named() {
+    let dir = manifest_dir().join("examples/one-window");
+    let bash = program_on_path("bash");
+    let tmux = program_on_path("tmux");
+    let only_bash = temp_tutorial("path-bash");
+    fs::create_dir_all(&only_bash).expect("a directory");
+    std::os::unix::fs::symlink(&bash, only_bash.join("bash")).expect("a bash link");
+    let transcript = only_bash.join("transcript.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .args(["play", "--auto", "--transcript"])
+        .arg(&transcript)
+        .arg(&dir)
+        .env("PATH", &only_bash)
+        .output()
+        .expect("play runs");
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("tmux"), "{}", text(&output.stderr));
+    assert!(!transcript.exists());
+
+    let only_tmux = temp_tutorial("path-tmux");
+    fs::create_dir_all(&only_tmux).expect("a directory");
+    std::os::unix::fs::symlink(&tmux, only_tmux.join("tmux")).expect("a tmux link");
+    let transcript = only_tmux.join("transcript.toml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .args(["play", "--auto", "--transcript"])
+        .arg(&transcript)
+        .arg(&dir)
+        .env("PATH", &only_tmux)
+        .output()
+        .expect("play runs");
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
+    assert!(text(&output.stderr).contains("bash"), "{}", text(&output.stderr));
+    assert!(!transcript.exists());
+}
+
+fn program_on_path(name: &str) -> PathBuf {
+    let paths = std::env::var_os("PATH").expect("PATH");
+    for dir in std::env::split_paths(&paths) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    panic!("{name} is not on PATH");
+}
