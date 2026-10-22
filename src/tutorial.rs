@@ -30,7 +30,7 @@ pub(crate) fn script(dir: &Path) -> u8 {
     }
 }
 
-/// Play a bash tutorial in the windows it declares. The value is the process exit code.
+/// Play a tutorial in the shell its index declares. The value is the process exit code.
 pub(crate) fn play(dir: &Path, transcript: &Path, run: Option<&Path>, run_setup: bool) -> u8 {
     play_as(dir, transcript, run, run_setup, None)
 }
@@ -86,7 +86,8 @@ fn play_as(
         None
     };
     let setup = setup.as_ref().map(|(name, path)| (name.as_str(), path.as_path()));
-    match crate::play::drive(transcript, &loaded.play_commands, &windows, run, setup) {
+    match crate::play::drive(transcript, &loaded.play_commands, &windows, run, setup, loaded.shell)
+    {
         Ok(count) => {
             println!("{}", played(count));
             0
@@ -117,7 +118,6 @@ struct Loaded {
     blocks: Vec<Block>,
     play_commands: Vec<PlayCommand>,
     shell: index::Shell,
-    shell_line: Option<usize>,
     setup: Option<(String, usize)>,
     windows: Vec<index::Window>,
 }
@@ -166,8 +166,7 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         Err(problem) => return Err(vec![problem]),
     };
 
-    let index::Tutorial { pages, windows, settings, mut problems, shell, shell_line, setup } =
-        tutorial;
+    let index::Tutorial { pages, windows, settings, mut problems, shell, setup } = tutorial;
     let mut read = Read {
         blocks: Vec::new(),
         play_commands: Vec::new(),
@@ -206,7 +205,6 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         blocks: read.blocks,
         play_commands: read.play_commands,
         shell,
-        shell_line,
         setup,
         windows,
     })
@@ -429,13 +427,6 @@ fn absolute_in(dir: &Path, relative: &str) -> PathBuf {
 }
 
 fn refuse_scope(loaded: &Loaded, run_setup: bool) -> Option<Problem> {
-    if matches!(loaded.shell, index::Shell::Zsh) {
-        return Some(Problem {
-            relative: "tutorial.toml".to_string(),
-            line: loaded.shell_line.unwrap_or(1),
-            message: "play --auto runs bash; this tutorial declares zsh".to_string(),
-        });
-    }
     if !run_setup {
         if let Some((path, line)) = &loaded.setup {
             return Some(Problem {

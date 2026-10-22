@@ -57,6 +57,7 @@
             pkgs.cargo-deny
             pkgs.tmux
             pkgs.bashInteractive
+            pkgs.zsh
             pkgs.procps
           ];
           env = {
