@@ -22,10 +22,8 @@ fn version_names_the_program_the_version_and_the_commit() {
     let output = run(&["--version"]);
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let line = stdout(&output).lines().next().unwrap_or("").to_string();
-    assert!(
-        line.starts_with("tutorial-stepper 0.1.0 (commit ") && line.ends_with(')'),
-        "version line was {line:?}"
-    );
+    let prefix = format!("tutorial-stepper {} (commit ", env!("CARGO_PKG_VERSION"));
+    assert!(line.starts_with(&prefix) && line.ends_with(')'), "version line was {line:?}");
 }
 
 #[test]
@@ -34,10 +32,8 @@ fn no_arguments_prints_a_one_screen_overview() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let text = stdout(&output);
     let first = text.lines().next().unwrap_or("");
-    assert!(
-        first.starts_with("tutorial-stepper 0.1.0 (commit "),
-        "overview did not open with the identity: {first:?}"
-    );
+    let prefix = format!("tutorial-stepper {} (commit ", env!("CARGO_PKG_VERSION"));
+    assert!(first.starts_with(&prefix), "overview did not open with the identity: {first:?}");
     assert!(text.contains("check"), "overview did not name the check command:\n{text}");
     assert!(text.contains("script"), "overview did not name the script command:\n{text}");
     assert!(
