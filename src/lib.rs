@@ -2,8 +2,10 @@
 
 pub mod fence;
 
+mod face;
 mod index;
 mod play;
+mod render;
 mod tutorial;
 
 use std::path::PathBuf;
@@ -38,9 +40,15 @@ pub fn run() -> u8 {
         Ok(cli) => match cli.command {
             Command::Check { dir } => check(&dir),
             Command::Script { dir, path } => script(&dir, path.as_deref()),
-            Command::Play { auto: _, dir, transcript, run, run_setup, path } => {
-                play(&dir, &transcript, run.as_deref(), run_setup, path.as_deref())
-            }
+            Command::Play { auto, page, dir, transcript, run, run_setup, path } => dispatch_play(
+                auto,
+                page,
+                &dir,
+                transcript.as_deref(),
+                run.as_deref(),
+                run_setup,
+                path.as_deref(),
+            ),
         },
         Err(err) => {
             let code = err.exit_code();
@@ -93,25 +101,28 @@ enum Command {
         /// Tutorial directory: an index file and one Markdown page per step.
         dir: PathBuf,
     },
-    /// Play a tutorial in the shell its index declares.
+    /// Play a tutorial page by page in the terminal.
     #[command(
         before_help = IDENTITY,
-        after_help = "Each command runs in the shell the index declares, bash when the index does not say. An observation runs where it appears and again at the end of the path. The transcript records each command and each observation run. --path NAME plays that tested path. Without --path, every tested path plays from its own run folder, and the command exits 1 if any path fails. The values are written to .env in the run folder, and every window loads the file before its first command. A sound tutorial prints how many commands played and exits 0. A block that exits with a different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2.\n\nExample:\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
+        after_help = "The page sits beside the window of the next command. Enter runs it, s skips it, c sends Ctrl-C, b goes back, n and p turn the page, and q closes the page and keeps the windows. A later play returns to the same place. The folder is $HOME/<name>-run unless --run names another.\n\nWith --auto each command runs in the shell the index declares, bash when the index does not say. An observation runs where it appears and again at the end of the path. --path NAME plays that tested path. Without --path, every tested path plays from its own run folder, and the command exits 1 if any path fails. The values are written to .env in the run folder, and every window loads the file before its first command. A different status is printed as FILE:LINE: message and the command exits 1. A mistake in the command line exits 2. --transcript and --run-setup are used with --auto.\n\nExample:\n  tutorial-stepper play examples/two-windows\n  tutorial-stepper play --auto examples/one-window --transcript transcript.toml"
     )]
     Play {
-        /// Play the tutorial without stopping for a person.
-        #[arg(long, required = true)]
+        /// Play every command without stopping for a person. Needs --transcript.
+        #[arg(long)]
         auto: bool,
+        /// Draw one page inside the stepper's own tmux server.
+        #[arg(long, hide = true)]
+        page: bool,
         /// File that receives one entry per command and per observation run.
-        #[arg(long, value_name = "FILE", required = true)]
-        transcript: PathBuf,
-        /// Directory that keeps each window's folder. Removed at the end when absent.
+        #[arg(long, value_name = "FILE")]
+        transcript: Option<PathBuf>,
+        /// Folder for the windows and the position. Defaults to $HOME/<name>-run.
         #[arg(long, value_name = "DIR")]
         run: Option<PathBuf>,
-        /// Run the declared set-up script before the first page.
+        /// With --auto, run the declared set-up script before the first command.
         #[arg(long)]
         run_setup: bool,
-        /// Tested path. Omit it to play every tested path.
+        /// With --auto, play this tested path. Omit it to play every path.
         #[arg(long, value_name = "NAME")]
         path: Option<String>,
         /// Tutorial directory: an index file and one Markdown page per step.
@@ -127,12 +138,45 @@ fn script(dir: &std::path::Path, path: Option<&str>) -> u8 {
     tutorial::script(dir, path)
 }
 
-fn play(
+fn dispatch_play(
+    auto: bool,
+    page: bool,
     dir: &std::path::Path,
-    transcript: &std::path::Path,
+    transcript: Option<&std::path::Path>,
     run: Option<&std::path::Path>,
     run_setup: bool,
     path: Option<&str>,
 ) -> u8 {
-    tutorial::play(dir, transcript, run, run_setup, path)
+    if page {
+        let Some(run) = run else {
+            eprintln!("the page needs --run DIR");
+            eprintln!("Run `tutorial-stepper play --help` for help.");
+            return 2;
+        };
+        return face::page(dir, run);
+    }
+    if auto {
+        let Some(transcript) = transcript else {
+            eprintln!("play --auto needs --transcript");
+            eprintln!("Run `tutorial-stepper play --help` for help.");
+            return 2;
+        };
+        return tutorial::play(dir, transcript, run, run_setup, path);
+    }
+    if transcript.is_some() {
+        return used_with_auto("--transcript");
+    }
+    if path.is_some() {
+        return used_with_auto("--path");
+    }
+    if run_setup {
+        return used_with_auto("--run-setup");
+    }
+    face::play(dir, run)
+}
+
+fn used_with_auto(option: &str) -> u8 {
+    eprintln!("{option} is used with --auto");
+    eprintln!("Run `tutorial-stepper play --help` for help.");
+    2
 }

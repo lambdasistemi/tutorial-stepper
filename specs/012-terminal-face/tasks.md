@@ -12,14 +12,14 @@
 
 Test first. A detached tmux session and the face are the subject. `--auto` stays green throughout.
 
-- [ ] A failing test that the rendered page shows a heading, bold, inline code, a code block, a link and a list, wrapped to a given width, and marks the command whose fence is named.
-- [ ] A failing test that `play DIR` in a detached tmux session shows that page beside the window of the next command, and that Enter runs the command there.
-- [ ] A failing test that the page moves beside the other window of `examples/two-windows` when that window's command is next.
-- [ ] A failing test that `s` skips, `c` interrupts a running command, `b` returns to the previous command and leaves its file, and `n` and `p` turn the page without moving the next command.
-- [ ] A failing test that a status other than the declared one is shown, and that Enter retries, `s` skips and `q` quits.
-- [ ] A failing test that `q` closes the page and keeps the windows, and that a second `play` of the same run marks the same command. The default folder is under the home directory and is named after the tutorial. `--run DIR` overrides it.
-- [ ] The smallest change that makes those tests pass. Sending a command and waiting for its end are the functions `--auto` already uses. `--auto` keeps its transcript, its flags and its server lifetime.
-- [ ] `docs/terminal.md` describes the keys, the default run folder and `--run`, in the same commit. `docs/play.md` and the README point at that page. `play --help` names the face first and stays within the line limit. The overview stays one screen.
+- [x] A failing test that the rendered page shows a heading, bold, inline code, a code block, a link and a list, wrapped to a given width, and marks the command whose fence is named.
+- [x] A failing test that `play DIR` in a detached tmux session shows that page beside the window of the next command, and that Enter runs the command there.
+- [x] A failing test that the page moves beside the other window of `examples/two-windows` when that window's command is next.
+- [x] A failing test that `s` skips, `c` interrupts a running command, `b` returns to the previous command and leaves its file, and `n` and `p` turn the page without moving the next command.
+- [x] A failing test that a status other than the declared one is shown, and that Enter retries, `s` skips and `q` quits.
+- [x] A failing test that `q` closes the page and keeps the windows, and that a second `play` of the same run marks the same command. The default folder is under the home directory and is named after the tutorial. `--run DIR` overrides it.
+- [x] The smallest change that makes those tests pass. Sending a command and waiting for its end are the functions `--auto` already uses. `--auto` keeps its transcript, its flags and its server lifetime.
+- [x] `docs/terminal.md` describes the keys, the default run folder and `--run`, in the same commit. `docs/play.md` and the README point at that page. `play --help` names the face first and stays within the line limit. The overview stays one screen.
 
 ## Phase 3: Verification
 

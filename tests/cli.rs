@@ -122,6 +122,14 @@ fn play_help_describes_that_command_only() {
     );
     assert!(text.contains("tutorial-stepper play --auto"), "play help had no example:\n{text}");
     assert!(
+        text.contains("tutorial-stepper play examples/two-windows"),
+        "play help had no example of the page:\n{text}"
+    );
+    assert!(text.contains("$HOME"), "play help did not name the home directory:\n{text}");
+    assert!(text.contains("Enter"), "play help did not name Enter:\n{text}");
+    assert!(text.contains("q closes"), "play help did not name q:\n{text}");
+    assert!(!text.contains("--page"), "play help showed the hidden page flag:\n{text}");
+    assert!(
         text.contains("again at the end"),
         "play help did not say an observation runs again at the end:\n{text}"
     );
@@ -131,13 +139,30 @@ fn play_help_describes_that_command_only() {
 }
 
 #[test]
-fn play_without_auto_is_a_short_error() {
-    let output = run(&["play", "examples/one-window"]);
+fn play_auto_without_a_transcript_is_a_short_error() {
+    let output = run(&["play", "--auto", "examples/one-window"]);
     assert_eq!(output.status.code(), Some(2), "stderr:\n{}", stderr(&output));
     let text = stderr(&output);
-    assert!(text.contains("--auto"), "the error did not name --auto:\n{text}");
+    assert!(text.contains("--transcript"), "the error did not name --transcript:\n{text}");
+    assert!(text.contains("--help"), "the error did not point at help:\n{text}");
     let lines = text.lines().count();
     assert!(lines <= 8, "error is {lines} lines:\n{text}");
+}
+
+#[test]
+fn play_flags_without_auto_are_a_short_error() {
+    for args in [
+        ["play", "examples/one-window", "--transcript", "transcript.toml"].as_slice(),
+        ["play", "examples/one-window", "--path", "main"].as_slice(),
+        ["play", "examples/one-window", "--run-setup"].as_slice(),
+    ] {
+        let output = run(args);
+        assert_eq!(output.status.code(), Some(2), "args {args:?} stderr:\n{}", stderr(&output));
+        let text = stderr(&output);
+        assert!(text.contains("--auto"), "the error did not name --auto:\n{text}");
+        let lines = text.lines().count();
+        assert!(lines <= 8, "error is {lines} lines:\n{text}");
+    }
 }
 
 #[test]

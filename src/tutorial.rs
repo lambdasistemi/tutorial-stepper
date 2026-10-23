@@ -181,7 +181,7 @@ fn play_one(
         .collect::<Vec<_>>();
     let initial = windows.first().map(|(name, _)| name.as_str()).unwrap_or("");
     let filter = if loaded.settings.is_empty() { None } else { Some(chosen) };
-    let steps = resolve_steps(&loaded.runnables, filter, initial);
+    let steps = resolve_steps(&loaded.runnables, filter, initial, true);
     let environment = environment_text(&loaded.settings, chosen);
     let setup = if run_setup {
         loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)))
@@ -284,6 +284,7 @@ struct Runnable {
 
 struct Loaded {
     pages: usize,
+    page_paths: Vec<String>,
     commands: usize,
     blocks: Vec<Block>,
     runnables: Vec<Runnable>,
@@ -340,6 +341,7 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
     };
 
     let index::Tutorial { pages, windows, settings, paths, mut problems, shell, setup } = tutorial;
+    let page_paths: Vec<String> = pages.iter().map(|page| page.path.clone()).collect();
     let mut read = Read { blocks: Vec::new(), runnables: Vec::new() };
     let mut commands = 0_usize;
     for page in &pages {
@@ -369,7 +371,8 @@ fn load(dir: &Path) -> Result<Loaded, Vec<Problem>> {
         return Err(problems);
     }
     Ok(Loaded {
-        pages: pages.len(),
+        pages: page_paths.len(),
+        page_paths,
         commands,
         blocks: read.blocks,
         runnables: read.runnables,
@@ -646,6 +649,7 @@ fn resolve_steps(
     runnables: &[Runnable],
     values: Option<&[(String, String)]>,
     initial: &str,
+    repeat_observations: bool,
 ) -> Vec<PlayStep> {
     let mut current = initial.to_string();
     let mut steps = Vec::new();
@@ -671,8 +675,120 @@ fn resolve_steps(
         }
         steps.push(step);
     }
-    steps.extend(again);
+    if repeat_observations {
+        steps.extend(again);
+    }
     steps
+}
+
+/// One page the terminal face renders.
+pub(crate) struct FacePage {
+    /// Path listed in the index.
+    pub path: String,
+    /// The page as written.
+    pub markdown: String,
+}
+
+/// What the terminal face plays: one run, at the default setting values, without the observation run at the end.
+pub(crate) struct FaceTutorial {
+    /// Pages in index order.
+    pub pages: Vec<FacePage>,
+    /// Commands and observations, in the order the learner steps them.
+    pub steps: Vec<PlayStep>,
+    /// Window name and folder.
+    pub windows: Vec<(String, String)>,
+    /// The shell the index declares.
+    pub shell: index::Shell,
+    /// Set-up script name and its absolute path, when the index names one.
+    pub setup: Option<(String, PathBuf)>,
+    /// `.env` text for the default values. Absent when the tutorial declares no settings.
+    pub environment: Option<String>,
+    /// The default values, one `NAME=value` per setting, for the page to show.
+    pub settings_line: Option<String>,
+    /// The defaults are not one of the tested paths.
+    pub untested_settings: bool,
+    /// Needs, in index order. The minimum is the declared text.
+    pub needs: Vec<(String, Option<String>)>,
+}
+
+/// A tutorial the face can play, or the format problems `check` would print.
+pub(crate) enum FaceOpen {
+    /// The same problems as `check`.
+    Problems(Vec<Problem>),
+    /// Ready to play.
+    Ready(FaceTutorial),
+}
+
+/// Read `dir` the way the terminal face plays it.
+pub(crate) fn open_for_face(dir: &Path) -> FaceOpen {
+    let loaded = match load(dir) {
+        Ok(loaded) => loaded,
+        Err(problems) => return FaceOpen::Problems(problems),
+    };
+    let chosen = values_in_force(&loaded, None);
+    let untested_settings =
+        !loaded.paths.is_empty() && !loaded.paths.iter().any(|path| path.values == chosen);
+    let settings_line = if loaded.settings.is_empty() {
+        None
+    } else {
+        Some(
+            chosen
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    };
+    let filter = if loaded.settings.is_empty() { None } else { Some(chosen.as_slice()) };
+    let initial = loaded.windows.first().map(|window| window.name.as_str()).unwrap_or("");
+    let steps = resolve_steps(&loaded.runnables, filter, initial, false);
+    let pages = loaded
+        .page_paths
+        .iter()
+        .map(|path| FacePage {
+            path: path.clone(),
+            markdown: fs::read_to_string(dir.join(path)).unwrap_or_default(),
+        })
+        .collect();
+    let windows =
+        loaded.windows.iter().map(|window| (window.name.clone(), window.folder.clone())).collect();
+    let needs = loaded
+        .windows
+        .iter()
+        .flat_map(|window| {
+            window.needs.iter().map(|need| (need.program.clone(), need.minimum.clone()))
+        })
+        .collect();
+    let setup = loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)));
+    let environment = environment_text(&loaded.settings, &chosen);
+    FaceOpen::Ready(FaceTutorial {
+        pages,
+        steps,
+        windows,
+        shell: loaded.shell,
+        setup,
+        environment,
+        settings_line,
+        untested_settings,
+        needs,
+    })
+}
+
+/// Print format problems the way `check` does. The value is the process exit code.
+pub(crate) fn report_problems(dir: &Path, problems: &[Problem]) -> u8 {
+    refuse(dir, problems)
+}
+
+/// Refuse a set-up script when this process would run it as root.
+pub(crate) fn refuse_setup_as_root(script: Option<&str>) -> Result<(), String> {
+    let Some(script) = script else {
+        return Ok(());
+    };
+    match supplied_user(None) {
+        Ok(0) => Err(setup_as_root_message(script)),
+        Ok(_) => Ok(()),
+        Err(message) => Err(message),
+    }
 }
 
 fn environment_text(settings: &[index::Setting], values: &[(String, String)]) -> Option<String> {
