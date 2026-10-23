@@ -873,10 +873,16 @@ impl Session {
     }
 
     /// Move `pane` onto a window named `holding` so the other windows can close.
+    ///
+    /// The window starts with a pane that only waits, and that pane is removed
+    /// once the page has joined, so the choice is the only pane.
     pub(crate) fn park_page(&self, pane: &str) -> Result<(), Failure> {
         let _ = self.tmux_ok(&["kill-window", "-t", "play:=holding"]);
-        self.tmux_ok(&["new-window", "-d", "-t", "play", "-n", "holding"])?;
+        self.tmux_ok(&["new-window", "-d", "-t", "play", "-n", "holding", "sleep", "86400"])?;
+        let holder =
+            self.tmux_text(&["display-message", "-p", "-t", "play:=holding", "#{pane_id}"])?;
         self.tmux_ok(&["join-pane", "-s", pane, "-t", "play:=holding"])?;
+        self.tmux_ok(&["kill-pane", "-t", &holder])?;
         self.tmux_ok(&["select-window", "-t", "play:=holding"])?;
         self.tmux_ok(&["select-pane", "-t", pane])?;
         Ok(())

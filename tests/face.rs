@@ -1436,6 +1436,14 @@ fn a_later_visit_continues_and_choosing_again_keeps_the_earlier_folder() {
     face.wait_page("n starts a new run");
     face.send(&["n"]);
     face.wait_page("Choose the settings");
+    let socket = face.socket().expect("the server is up");
+    let panes =
+        face.tmux(&socket, &["list-panes", "-a", "-F", "#{window_name} #{pane_current_command}"]);
+    let listed = String::from_utf8_lossy(&panes.stdout);
+    assert!(panes.status.success(), "{listed}");
+    assert!(listed.contains("tutorial-stepper"), "{listed}");
+    assert!(!listed.contains("bash"), "{listed}");
+    assert!(!listed.contains("zsh"), "{listed}");
     let run = face.run_dir();
     let name = run.file_name().expect("the run folder has a name").to_string_lossy();
     let aside = run.with_file_name(format!("{name}.1"));
