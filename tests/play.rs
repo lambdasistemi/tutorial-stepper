@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -1729,12 +1730,17 @@ fn a_missing_tmux_or_bash_is_named() {
 }
 
 fn executable(dir: &Path, name: &str, body: &str) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     fs::create_dir_all(dir).expect("the program directory");
     let path = dir.join(name);
-    fs::write(&path, body).expect("the program");
-    let mut permissions = fs::metadata(&path).expect("the program metadata").permissions();
+    // Write somewhere else, close the file, then rename. A fork that still
+    // holds the writing descriptor must not make the executed path busy.
+    let temporary = dir.join(format!(".{name}-{}.writing", NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&temporary, body).expect("the program");
+    let mut permissions = fs::metadata(&temporary).expect("the program metadata").permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("the program is executable");
+    fs::set_permissions(&temporary, permissions).expect("the program is executable");
+    fs::rename(&temporary, &path).expect("the program is renamed into place");
 }
 
 fn first_dotted(text: &str) -> Option<&str> {

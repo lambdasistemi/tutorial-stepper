@@ -313,17 +313,56 @@ impl Face {
     }
 
     /// The shell pane, not the page that shares its window.
-    fn shell_screen(&self, window: &str) -> Option<String> {
+    fn shell_pane(&self, window: &str) -> Option<String> {
         let text =
             fs::read_to_string(self.run_dir().join(".tutorial-stepper/session.toml")).ok()?;
         let document: toml_edit::DocumentMut = text.parse().ok()?;
-        let windows = document.get("window")?.as_array_of_tables()?;
-        let pane = windows.iter().find_map(|table| {
-            let name = table.get("name").and_then(toml_edit::Item::as_str)?;
-            (name == window).then(|| table.get("pane").and_then(toml_edit::Item::as_str))?
-        })?;
+        let windows = document.get("window").and_then(toml_edit::Item::as_array_of_tables)?;
+        for table in windows {
+            let Some(name) = table.get("name").and_then(toml_edit::Item::as_str) else {
+                continue;
+            };
+            if name == window {
+                return table.get("pane").and_then(toml_edit::Item::as_str).map(str::to_string);
+            }
+        }
+        None
+    }
+
+    fn shell_screen(&self, window: &str) -> Option<String> {
+        let pane = self.shell_pane(window)?;
         let socket = self.socket()?;
-        self.capture(&socket, pane)
+        self.capture(&socket, &pane)
+    }
+
+    fn send_shell(&self, window: &str, keys: &[&str]) {
+        let socket = self.socket().unwrap_or_else(|| panic!("no server yet\n{}", self.dump()));
+        let pane = self
+            .shell_pane(window)
+            .unwrap_or_else(|| panic!("no shell pane for {window}\n{}", self.dump()));
+        let mut args = vec!["send-keys", "-t", pane.as_str()];
+        args.extend(keys);
+        let output = self.tmux(&socket, &args);
+        assert!(
+            output.status.success(),
+            "send-keys {keys:?} failed: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            self.dump()
+        );
+    }
+
+    fn send_shell_text(&self, window: &str, text: &str) {
+        let socket = self.socket().unwrap_or_else(|| panic!("no server yet\n{}", self.dump()));
+        let pane = self
+            .shell_pane(window)
+            .unwrap_or_else(|| panic!("no shell pane for {window}\n{}", self.dump()));
+        let output = self.tmux(&socket, &["send-keys", "-l", "-t", &pane, text]);
+        assert!(
+            output.status.success(),
+            "send-keys text failed: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            self.dump()
+        );
     }
 
     fn wait_log(&self, window: &str, needle: &str) -> String {
@@ -661,6 +700,52 @@ fn the_prompt_names_the_window(shell: &str) {
     );
 }
 
+fn push_leaves_several_lines_unrun(shell: &str) {
+    let page = "\
+```bash { window=bob }
+printf 'pushed-first\\n'
+printf 'pushed-second\\n'
+```
+";
+    let (_keep, tutorial) = tutorial_with_shell("push-wait", shell, page);
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Enter runs it");
+    let before = face.position();
+    face.send(&["e"]);
+    let screen =
+        face.wait_until(Duration::from_secs(15), "the unrun command at the prompt", |face| {
+            let screen = face.shell_screen("bob")?;
+            (screen.contains("printf 'pushed-first") && screen.contains("printf 'pushed-second"))
+                .then_some(screen)
+        });
+    thread::sleep(Duration::from_millis(500));
+    let screen = face.shell_screen("bob").unwrap_or(screen);
+    assert!(
+        !screen.lines().any(|line| line.trim() == "pushed-first" || line.trim() == "pushed-second"),
+        "the {shell} command ran before Enter:\n{screen}"
+    );
+    assert_eq!(face.position(), before, "e moved the next command");
+}
+
+fn an_edited_push_is_what_the_page_shows(shell: &str) {
+    let page = "```bash { window=bob }\necho hi\n```\n";
+    let (_keep, tutorial) = tutorial_with_shell("push-edit", shell, page);
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Enter runs it");
+    face.send(&["e"]);
+    face.wait_until(Duration::from_secs(15), "the command at the prompt", |face| {
+        let screen = face.shell_screen("bob")?;
+        let pasted = screen.contains("echo hi");
+        let ran = screen.lines().any(|line| line.trim() == "hi");
+        (pasted && !ran).then_some(())
+    });
+    face.send_shell("bob", &["BSpace", "BSpace"]);
+    face.send_shell_text("bob", "edited");
+    face.send_shell("bob", &["Enter"]);
+    let page = face.wait_page("echo edited");
+    assert!(page.contains("The shell ran"), "the {shell} page does not show the record:\n{page}");
+}
+
 fn the_typed_command_shows_in_the_window(shell: &str) {
     let page = "```bash { window=bob }\nprintf 'from-the-command\\n'\n```\n";
     let (_keep, tutorial) = tutorial_with_shell("typed", shell, page);
@@ -689,6 +774,26 @@ fn the_bash_prompt_names_the_window() {
 #[test]
 fn the_zsh_prompt_names_the_window() {
     the_prompt_names_the_window("zsh");
+}
+
+#[test]
+fn push_leaves_several_bash_lines_unrun() {
+    push_leaves_several_lines_unrun("bash");
+}
+
+#[test]
+fn push_leaves_several_zsh_lines_unrun() {
+    push_leaves_several_lines_unrun("zsh");
+}
+
+#[test]
+fn an_edited_bash_push_is_what_the_page_shows() {
+    an_edited_push_is_what_the_page_shows("bash");
+}
+
+#[test]
+fn an_edited_zsh_push_is_what_the_page_shows() {
+    an_edited_push_is_what_the_page_shows("zsh");
 }
 
 #[test]
