@@ -1,0 +1,46 @@
+site_name: tutorial-stepper
+site_description: Step a Markdown tutorial's commands into real shells, one at a time.
+site_url: https://lambdasistemi.github.io/tutorial-stepper/
+repo_url: https://github.com/lambdasistemi/tutorial-stepper
+docs_dir: docs
+theme:
+  name: terminal
+  custom_dir: docs/overrides
+  palette: default
+  features:
+    - footer.prev_next
+    - navigation.top.cursor_animation.hide
+nav:
+  - Start here:
+      - tutorial-stepper: index.md
+  - Write a tutorial:
+      - The format: format.md
+      - The commands: commands.md
+      - An author's guide: author.md
+  - Run a tutorial:
+      - The terminal: terminal.md
+      - Playing unattended: play.md
+      - A printed script: script.md
+  - Read the source:
+      - Library reference: library.md
+plugins:
+  - search
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+extra_javascript:
+  - javascripts/mermaid.js
+extra_css:
+  - stylesheets/terminal.css
+validation:
+  links:
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
+  nav:
+    omitted_files: warn

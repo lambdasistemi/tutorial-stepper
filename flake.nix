@@ -44,6 +44,14 @@
           inherit pkgs craneEnv release-artifacts;
           tutorial-stepper = packages.tutorial-stepper;
         };
+
+        docs = import ./nix/docs.nix {
+          inherit pkgs;
+          rustdoc = craneEnv.craneLib.cargoDoc (craneEnv.commonArgs // {
+            cargoArtifacts = craneEnv.cargoArtifacts;
+            env.RUSTDOCFLAGS = "--deny warnings";
+          });
+        };
       in
       {
         packages = {
@@ -54,12 +62,15 @@
             tutorial-stepper-static-aarch64
             ;
           inherit release-artifacts;
+          documentation-site = docs.site;
           # The Apple Silicon build compiles with this toolchain and the
           # system linker, so the published binary does not need a Nix store.
           rust-toolchain = rustToolchain;
         };
 
-        inherit checks;
+        checks = checks // {
+          documentation = docs.check;
+        };
 
         devShells.default = craneEnv.craneLib.devShell {
           packages = [

@@ -20,7 +20,8 @@ explanations back.
 **A tutorial author** writes plain Markdown, with the commands in ordinary code blocks, declares the
 settings and which combinations of them are tested, and gets three things from one source: the
 tutorial their learners play locally, an unattended run of each tested combination that fails in CI
-when the tutorial stops working, and a Killercoda scenario per tested combination. From the same
+when the tutorial stops working, and, once the Killercoda renderer lands in a later milestone,
+a Killercoda scenario per tested combination. From the same
 source, `tutorial-stepper script` prints one bash script, each command named with its page and its
 window, for reading, diffing, and a quick run outside the stepper.
 [paolino/runmd](https://github.com/paolino/runmd) is superseded by `tutorial-stepper script`.
@@ -108,15 +109,16 @@ flowchart LR
   shells["Shells in tmux windows"]
   page["Terminal face: the page beside the window"]
   ci["Unattended run: exit status and transcript"]
-  killercoda["Killercoda scenario"]
+  killercoda["Killercoda scenario (planned)"]
   printed["One bash script of the commands"]
   source -->|"read by"| stepper
   stepper -->|"types commands into"| shells
   shells -->|"prompt hook reports the line, the end and the status"| stepper
   stepper -->|"drives"| page
   stepper -->|"drives"| ci
-  source -->|"rendered to"| killercoda
+  source -->|"renders to, planned"| killercoda
   source -->|"printed as"| printed
+  style killercoda stroke-dasharray:5
 ```
 
 ## What a step looks like

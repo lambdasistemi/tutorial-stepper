@@ -41,10 +41,9 @@ trap 'rm -rf "$formula" "$tap"' EXIT
 bash "$root/scripts/render-homebrew-formula.sh" "$version" "$sha" > "$formula"
 
 export GIT_TERMINAL_PROMPT=0
-git clone --depth 1 https://github.com/lambdasistemi/homebrew-tap.git "$tap"
+git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/lambdasistemi/homebrew-tap.git" "$tap"
 git -C "$tap" config user.name "github-actions"
 git -C "$tap" config user.email "actions@github.com"
-git -C "$tap" config http.extraheader "AUTHORIZATION: bearer ${TAP_TOKEN}"
 mkdir -p "$tap/Formula"
 cp "$formula" "$tap/Formula/tutorial-stepper.rb"
 git -C "$tap" add Formula/tutorial-stepper.rb

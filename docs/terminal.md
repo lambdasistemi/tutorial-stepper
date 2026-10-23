@@ -44,8 +44,6 @@ stateDiagram-v2
   [*] --> Full
   Full --> Folded: f
   Folded --> Full: f
-  Folded --> Folded: Enter, e, o, s, c, b, n, p
-  Full --> Full: Enter, e, o, s, c, b, n, p
 ```
 
 ## An observation at any time
