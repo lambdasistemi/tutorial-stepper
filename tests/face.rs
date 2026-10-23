@@ -312,11 +312,34 @@ impl Face {
         .unwrap_or_default()
     }
 
+    /// The shell pane, not the page that shares its window.
+    fn shell_screen(&self, window: &str) -> Option<String> {
+        let text =
+            fs::read_to_string(self.run_dir().join(".tutorial-stepper/session.toml")).ok()?;
+        let document: toml_edit::DocumentMut = text.parse().ok()?;
+        let windows = document.get("window")?.as_array_of_tables()?;
+        let pane = windows.iter().find_map(|table| {
+            let name = table.get("name").and_then(toml_edit::Item::as_str)?;
+            (name == window).then(|| table.get("pane").and_then(toml_edit::Item::as_str))?
+        })?;
+        let socket = self.socket()?;
+        self.capture(&socket, pane)
+    }
+
     fn wait_log(&self, window: &str, needle: &str) -> String {
         self.wait_until(Duration::from_secs(15), needle, |face| {
             let text = face.log(window);
             text.contains(needle).then_some(text)
         })
+    }
+
+    /// Lines the shell showed. A carriage return redraws the line, so the
+    /// visible text is the part after the last one.
+    fn shown_lines(&self, window: &str, text: &str) -> usize {
+        self.log(window)
+            .lines()
+            .filter(|line| line.trim_end_matches('\r').rsplit('\r').next() == Some(text))
+            .count()
     }
 
     fn position(&self) -> String {
@@ -552,8 +575,7 @@ fn an_unexpected_status_can_be_retried_or_skipped() {
     assert!(choice.contains("exited 0, expected 19"), "{choice}");
     face.send(&["Enter"]);
     face.wait_until(Duration::from_secs(15), "the command to run again", |face| {
-        let count = face.log("bob").lines().filter(|line| *line == "not yet").count();
-        (count >= 2).then_some(())
+        (face.shown_lines("bob", "not yet") >= 2).then_some(())
     });
     let again = face.wait_page("Enter retries");
     assert!(again.contains("exited 0, expected 19"), "{again}");
@@ -568,7 +590,7 @@ fn quit_on_an_unexpected_status_keeps_the_choice_for_the_next_play() {
     face.wait_page("Enter runs it");
     face.send(&["Enter"]);
     face.wait_page("Enter retries");
-    let ran = face.log("bob").lines().filter(|line| *line == "not yet").count();
+    let ran = face.shown_lines("bob", "not yet");
     face.send(&["q"]);
     let page = face.page_id().expect("the page was recorded");
     face.wait_until(Duration::from_secs(10), "the page to close", |face| {
@@ -581,11 +603,7 @@ fn quit_on_an_unexpected_status_keeps_the_choice_for_the_next_play() {
     let choice = face.wait_page("Enter retries");
     assert!(choice.contains("exited 0, expected 19"), "{choice}");
     thread::sleep(Duration::from_millis(400));
-    assert_eq!(
-        face.log("bob").lines().filter(|line| *line == "not yet").count(),
-        ran,
-        "resume ran the command again"
-    );
+    assert_eq!(face.shown_lines("bob", "not yet"), ran, "resume ran the command again");
 }
 
 #[test]
@@ -607,6 +625,80 @@ fn quit_keeps_the_windows_and_a_second_play_resumes() {
     assert!(page.contains("next"), "{page}");
     assert_eq!(face.window_of_page(), "bob");
     assert!(!face.log("bob").contains("hi\n") && !face.log("bob").contains("echo hi"));
+}
+
+fn tutorial_with_shell(name: &str, shell: &str, page: &str) -> (TutorialGuard, PathBuf) {
+    let parent = std::env::temp_dir().join(format!(
+        "tutorial-stepper-face-src-{}-{}",
+        std::process::id(),
+        unique()
+    ));
+    let dir = parent.join(name);
+    fs::create_dir_all(&dir).expect("the tutorial directory is created");
+    let index = format!(
+        "shell = \"{shell}\"\npages = [\"welcome.md\"]\n\n[[window]]\nname = \"bob\"\nfolder = \"bob\"\n"
+    );
+    fs::write(dir.join("tutorial.toml"), index).expect("the index is written");
+    fs::write(dir.join("welcome.md"), page).expect("the page is written");
+    (TutorialGuard(parent), dir)
+}
+
+fn shell_has_drawn(face: &Face) -> Option<String> {
+    let screen = face.shell_screen("bob")?;
+    screen.lines().any(|line| !line.trim().is_empty()).then_some(screen)
+}
+
+fn the_prompt_names_the_window(shell: &str) {
+    let page = "```bash { window=bob }\necho hi\n```\n";
+    let (_keep, tutorial) = tutorial_with_shell("prompt", shell, page);
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Enter runs it");
+    let screen = face.wait_until(Duration::from_secs(15), "the shell to draw", shell_has_drawn);
+    assert!(screen.contains("bob$"), "the {shell} prompt does not name the window:\n{screen}");
+    assert!(
+        !screen.contains("tutorial-stepper-prompt"),
+        "the {shell} window shows the internal marker:\n{screen}"
+    );
+}
+
+fn the_typed_command_shows_in_the_window(shell: &str) {
+    let page = "```bash { window=bob }\nprintf 'from-the-command\\n'\n```\n";
+    let (_keep, tutorial) = tutorial_with_shell("typed", shell, page);
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Enter runs it");
+    face.send(&["Enter"]);
+    let screen = face.wait_until(Duration::from_secs(15), "the command output", |face| {
+        let screen = shell_has_drawn(face)?;
+        screen.lines().any(|line| line.trim() == "from-the-command").then_some(screen)
+    });
+    assert!(
+        screen.contains("printf 'from-the-command"),
+        "the {shell} window does not show the typed command:\n{screen}"
+    );
+    assert!(
+        !screen.contains("tutorial-stepper-prompt"),
+        "the {shell} window shows the internal marker:\n{screen}"
+    );
+}
+
+#[test]
+fn the_bash_prompt_names_the_window() {
+    the_prompt_names_the_window("bash");
+}
+
+#[test]
+fn the_zsh_prompt_names_the_window() {
+    the_prompt_names_the_window("zsh");
+}
+
+#[test]
+fn the_typed_command_shows_in_the_bash_window() {
+    the_typed_command_shows_in_the_window("bash");
+}
+
+#[test]
+fn the_typed_command_shows_in_the_zsh_window() {
+    the_typed_command_shows_in_the_window("zsh");
 }
 
 #[test]

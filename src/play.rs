@@ -469,19 +469,20 @@ impl Session {
         let pane = &self.panes[index];
         let status = sh_single(&pane.status_path.display().to_string());
         let prompt = sh_single(&self.marker);
+        let window = sh_single(&pane.name);
         let program = sh_single(&shell.display().to_string());
         let environment = self.env_export();
         let launcher = match kind {
             crate::index::Shell::Bash => {
                 let hook = sh_single(&self.control_dir.join("hook").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {program} --noprofile --rcfile {hook}\n"
+                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
                 )
             }
             crate::index::Shell::Zsh => {
                 let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
                 )
             }
         };
@@ -966,16 +967,18 @@ fn remove_tree(path: &Path) {
 // The hook appends the exit status before the prompt is drawn, which is why
 // the output wait follows the status line. zsh's `status` parameter is
 // read-only, so the hook stores the code under another name.
+// The visible prompt is the window's name. The marker is a terminal title:
+// the pane log records it and the screen does not show it. Echo stays on,
+// so the typed command is visible. The title is where the output is cut.
 const BASH_HOOK: &str = r#"
 if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
   set -a
   . "$TUTORIAL_STEPPER_ENV"
   set +a
 fi
-PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"'
-PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
+PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"; printf "\033]0;%s\007" "$TUTORIAL_STEPPER_PROMPT"'
+PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
-stty -echo
 bind 'set enable-bracketed-paste on'
 unset HISTFILE
 "#;
@@ -989,12 +992,12 @@ fi
 precmd() {
   local exit_status=$?
   print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
+  print -n -- $'\e]0;'"$TUTORIAL_STEPPER_PROMPT"$'\a'
 }
-PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
+PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
 unset RPS1
 unsetopt prompt_cr prompt_sp
-stty -echo
 unset HISTFILE
 setopt no_beep
 zle_highlight=(none)
@@ -1042,26 +1045,23 @@ fn complete_lines(text: &str) -> Vec<&str> {
     lines
 }
 
-/// Output is the new log text with the prompt marker removed.
-/// The shell turns bracketed paste off before the command's output.
-/// zsh writes a clear sequence immediately before the marker.
-/// Carriage-return newline pairs become newlines. A lone carriage return stays.
+/// Output is the new log text, cut at the prompt marker.
+/// The marker is a terminal title (`ESC ] 0 ; marker BEL`). The screen does
+/// not show it. The shell turns bracketed paste off before the command's
+/// output, so text echoed before that switch, including the typed command,
+/// is not part of the output. Carriage-return newline pairs become newlines.
+/// A lone carriage return stays.
 fn command_output(bytes: &[u8], marker: &str) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
-    let crlf = format!("\r\n{marker}\r\n");
-    let lf = format!("\n{marker}\n");
-    let head = if let Some(index) = text.find(&crlf) {
-        &text[..index]
-    } else {
-        let index = text.find(&lf)?;
-        &text[..index]
-    };
+    let index = text.find(marker)?;
+    let head = text[..index].strip_suffix("\u{1b}]0;").unwrap_or(&text[..index]);
     Some(strip_paste_mode(head).replace("\r\n", "\n"))
 }
 
 /// Drop the shell's bracketed-paste switches and zsh's prompt redraw.
-/// The off switch may follow command text zsh displayed. A command that
-/// prints the same bytes in the middle keeps them.
+/// The off switch follows the typed command. A command that prints the same
+/// bytes in the middle keeps them. bash writes one carriage return after the
+/// off switch; zsh writes a carriage return, a carriage return and a newline.
 fn strip_paste_mode(text: &str) -> &str {
     const OFF: &str = "\u{1b}[?2004l";
     const ON: &str = "\u{1b}[?2004h";
@@ -1071,6 +1071,7 @@ fn strip_paste_mode(text: &str) -> &str {
         rest.strip_prefix("\r\r\n")
             .or_else(|| rest.strip_prefix("\r\n"))
             .or_else(|| rest.strip_prefix('\n'))
+            .or_else(|| rest.strip_prefix('\r'))
             .unwrap_or(rest)
     } else {
         text
@@ -1180,31 +1181,28 @@ mod tests {
     }
 
     #[test]
-    fn command_output_drops_the_prompt_and_carriage_returns() {
-        assert_eq!(command_output(b"hi\r\n\r\nMARKER\r\n", "MARKER").as_deref(), Some("hi\n"));
-        assert_eq!(command_output(b"\r\nMARKER\r\n", "MARKER").as_deref(), Some(""));
-        assert_eq!(
-            command_output(b"hello world\r\n\r\nMARKER\r\n", "MARKER").as_deref(),
-            Some("hello world\n")
-        );
-        assert_eq!(command_output(b"a\rb\r\n\r\nMARKER\r\n", "MARKER").as_deref(), Some("a\rb\n"));
+    fn command_output_drops_the_prompt_and_the_typed_command() {
+        let bash = "\u{1b}[7mecho hi\u{1b}[27m\r\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[Cecho hi\r\n\u{1b}[?2004l\rhi\r\n\u{1b}]0;MARKER\u{7}\u{1b}[?2004hbob$ ";
+        assert_eq!(command_output(bash.as_bytes(), "MARKER").as_deref(), Some("hi\n"));
+        let quiet = "\u{1b}[7mtrue\u{1b}[27m\u{8}\u{8}\u{8}\u{8}true\r\n\u{1b}[?2004l\r\u{1b}]0;MARKER\u{7}\u{1b}[?2004hbob$ ";
+        assert_eq!(command_output(quiet.as_bytes(), "MARKER").as_deref(), Some(""));
+        let words = "\u{1b}[?2004l\rhello world\r\n\u{1b}]0;MARKER\u{7}";
+        assert_eq!(command_output(words.as_bytes(), "MARKER").as_deref(), Some("hello world\n"));
+        let cr = "\u{1b}[?2004l\ra\rb\r\n\u{1b}]0;MARKER\u{7}";
+        assert_eq!(command_output(cr.as_bytes(), "MARKER").as_deref(), Some("a\rb\n"));
         assert_eq!(command_output(b"hi\r\n", "MARKER"), None);
-        let wrapped = b"\x1b[?2004l\r\r\nhi\r\n\x1b[?2004h\r\nMARKER\r\n";
-        assert_eq!(command_output(wrapped, "MARKER").as_deref(), Some("hi\n"));
-        let quiet = b"\x1b[?2004l\r\r\n\x1b[?2004h\r\nMARKER\r\n";
-        assert_eq!(command_output(quiet, "MARKER").as_deref(), Some(""));
     }
 
     #[test]
     fn command_output_drops_the_zsh_prompt_redraw() {
-        let hi =
-            "echo hi\u{1b}[?2004l\r\r\nhi\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let hi = "echo hi\u{1b}[?2004l\r\r\nhi\r\n\u{1b}]0;MARKER\u{7}\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[Jbob$ \u{1b}[K\u{1b}[?2004h";
         assert_eq!(command_output(hi.as_bytes(), "MARKER").as_deref(), Some("hi\n"));
-        let quiet = "false\u{1b}[?2004l\r\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let quiet = "false\u{1b}[?2004l\r\r\n\u{1b}]0;MARKER\u{7}\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[Jbob$ \u{1b}[K\u{1b}[?2004h";
         assert_eq!(command_output(quiet.as_bytes(), "MARKER").as_deref(), Some(""));
-        let lines = "echo one\r\r\necho two\u{1b}[K\u{1b}[?2004l\r\r\none\r\ntwo\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let lines =
+            "echo one\r\r\necho two\u{1b}[K\u{1b}[?2004l\r\r\none\r\ntwo\r\n\u{1b}]0;MARKER\u{7}";
         assert_eq!(command_output(lines.as_bytes(), "MARKER").as_deref(), Some("one\ntwo\n"));
-        let colour = "printf\u{1b}[?2004l\r\r\n\u{1b}[31mred\u{1b}[0m\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let colour = "printf\u{1b}[?2004l\r\r\n\u{1b}[31mred\u{1b}[0m\r\n\u{1b}]0;MARKER\u{7}";
         assert_eq!(
             command_output(colour.as_bytes(), "MARKER").as_deref(),
             Some("\u{1b}[31mred\u{1b}[0m\n")
