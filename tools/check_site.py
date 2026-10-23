@@ -147,6 +147,10 @@ def main(argv):
         if "mermaid" not in text or "Shells in tmux" not in text:
             failures.append("front page has no context diagram")
         require_text(text, "planned", failures, "the front page presents the Killercoda renderer as built")
+        for missing in ("favicon-32x32.png", "favicon-16x16.png", "favicon.ico", "android-chrome-", "apple-touch-icon"):
+            if missing in text:
+                failures.append(f"the front page links a favicon the site does not ship: {missing}")
+        require_text(text, "img/favicon.svg", failures, "the front page has no favicon that the site ships")
     for name, needle, message in (
         ("format", "tutorial.toml", "the format specification is missing"),
         ("commands", "tutorial-stepper check", "the command reference does not describe check"),
@@ -198,6 +202,9 @@ def main(argv):
         reference = rustdoc.read_text(encoding="utf-8", errors="replace")
         require_text(reference, "fn.run.html", failures, "the generated reference does not describe run")
         require_text(reference, "fence/index.html", failures, "the generated reference does not describe fence attributes")
+    icon = site / "img" / "favicon.svg"
+    if not icon.is_file():
+        failures.append(f"missing {icon}")
     if not workflow.is_file():
         failures.append(f"missing {workflow}")
     else:
