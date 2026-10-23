@@ -26,6 +26,9 @@ deny:
 doc:
     nix build .#checks.x86_64-linux.doc
 
+site:
+    nix build .#documentation-site
+
 # Fast inner loop. The gate is `just ci`.
 cargo-test:
     nix develop -c cargo test
