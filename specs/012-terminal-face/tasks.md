@@ -23,9 +23,9 @@ Test first. A detached tmux session and the face are the subject. `--auto` stays
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then in a detached tmux session `tutorial-stepper play examples/two-windows`, driven with `tmux send-keys`. The capture shows the page beside the right window, a command run by Enter, and the position kept after `q` and a second `play`.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then in a detached tmux session `tutorial-stepper play examples/two-windows`, driven with `tmux send-keys`. The capture shows the page beside the right window, a command run by Enter, and the position kept after `q` and a second `play`.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
