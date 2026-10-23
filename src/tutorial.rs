@@ -689,7 +689,17 @@ pub(crate) struct FacePage {
     pub markdown: String,
 }
 
-/// What the terminal face plays: one run, at the default setting values, without the observation run at the end.
+/// One setting the learner can choose before the first page.
+pub(crate) struct FaceSetting {
+    /// Setting name.
+    pub name: String,
+    /// Value selected when the learner does not change it.
+    pub default: String,
+    /// Allowed values, in the order the index declares them.
+    pub values: Vec<String>,
+}
+
+/// What the terminal face plays, at the chosen setting values, without the observation run at the end.
 pub(crate) struct FaceTutorial {
     /// Pages in index order.
     pub pages: Vec<FacePage>,
@@ -701,12 +711,14 @@ pub(crate) struct FaceTutorial {
     pub shell: index::Shell,
     /// Set-up script name and its absolute path, when the index names one.
     pub setup: Option<(String, PathBuf)>,
-    /// `.env` text for the default values. Absent when the tutorial declares no settings.
+    /// `.env` text for the chosen values. Absent when the tutorial declares no settings.
     pub environment: Option<String>,
-    /// The default values, one `NAME=value` per setting, for the page to show.
-    pub settings_line: Option<String>,
-    /// The defaults are not one of the tested paths.
-    pub untested_settings: bool,
+    /// Chosen values, in the order the index declares the settings.
+    pub values: Vec<(String, String)>,
+    /// Settings, in index order. Empty when the tutorial declares none.
+    pub settings: Vec<FaceSetting>,
+    /// Tested paths, each in settings order. Empty when the index declares none.
+    pub tested: Vec<Vec<(String, String)>>,
     /// Needs, in index order. The minimum is the declared text.
     pub needs: Vec<(String, Option<String>)>,
 }
@@ -715,30 +727,35 @@ pub(crate) struct FaceTutorial {
 pub(crate) enum FaceOpen {
     /// The same problems as `check`.
     Problems(Vec<Problem>),
-    /// Ready to play.
-    Ready(FaceTutorial),
+    /// Ready to play. Boxed so the problem list stays the small variant.
+    Ready(Box<FaceTutorial>),
 }
 
-/// Read `dir` the way the terminal face plays it.
+/// Read `dir` at the default setting values.
 pub(crate) fn open_for_face(dir: &Path) -> FaceOpen {
+    open_face_with(dir, None)
+}
+
+/// Read `dir` at `selected` values. `None` uses each setting's default.
+///
+/// `selected` is matched by name. The result's values are in index order.
+pub(crate) fn open_face_with(dir: &Path, selected: Option<&[(String, String)]>) -> FaceOpen {
     let loaded = match load(dir) {
         Ok(loaded) => loaded,
         Err(problems) => return FaceOpen::Problems(problems),
     };
-    let chosen = values_in_force(&loaded, None);
-    let untested_settings =
-        !loaded.paths.is_empty() && !loaded.paths.iter().any(|path| path.values == chosen);
-    let settings_line = if loaded.settings.is_empty() {
-        None
-    } else {
-        Some(
-            chosen
-                .iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-        )
-    };
+    let chosen = ordered_values(&loaded.settings, selected.unwrap_or(&[]));
+    let settings = loaded
+        .settings
+        .iter()
+        .map(|setting| FaceSetting {
+            name: setting.name.clone(),
+            default: setting.default.clone(),
+            values: setting.values.clone(),
+        })
+        .collect();
+    let tested =
+        loaded.paths.iter().map(|path| ordered_values(&loaded.settings, &path.values)).collect();
     let filter = if loaded.settings.is_empty() { None } else { Some(chosen.as_slice()) };
     let initial = loaded.windows.first().map(|window| window.name.as_str()).unwrap_or("");
     let steps = resolve_steps(&loaded.runnables, filter, initial, false);
@@ -761,17 +778,18 @@ pub(crate) fn open_for_face(dir: &Path) -> FaceOpen {
         .collect();
     let setup = loaded.setup.as_ref().map(|(name, _)| (name.clone(), absolute_in(dir, name)));
     let environment = environment_text(&loaded.settings, &chosen);
-    FaceOpen::Ready(FaceTutorial {
+    FaceOpen::Ready(Box::new(FaceTutorial {
         pages,
         steps,
         windows,
         shell: loaded.shell,
         setup,
         environment,
-        settings_line,
-        untested_settings,
+        values: chosen,
+        settings,
+        tested,
         needs,
-    })
+    }))
 }
 
 /// Print format problems the way `check` does. The value is the process exit code.
@@ -789,6 +807,54 @@ pub(crate) fn refuse_setup_as_root(script: Option<&str>) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(message) => Err(message),
     }
+}
+
+/// `NAME=value` for each chosen value whose name the command reads, in index order.
+///
+/// A command reads a setting when its text contains `$NAME` at the end of an
+/// identifier, or `${NAME}`.
+pub(crate) fn values_beside(body: &str, values: &[(String, String)]) -> String {
+    values
+        .iter()
+        .filter(|(name, _)| body_reads_setting(body, name))
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn ordered_values(
+    settings: &[index::Setting],
+    pairs: &[(String, String)],
+) -> Vec<(String, String)> {
+    settings
+        .iter()
+        .map(|setting| {
+            let value = pairs
+                .iter()
+                .find(|(name, _)| name == &setting.name)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_else(|| setting.default.clone());
+            (setting.name.clone(), value)
+        })
+        .collect()
+}
+
+fn body_reads_setting(body: &str, name: &str) -> bool {
+    let braced = format!("${{{name}}}");
+    if body.contains(&braced) {
+        return true;
+    }
+    let needle = format!("${name}");
+    let mut start = 0;
+    while let Some(found) = body[start..].find(&needle) {
+        let after = start + found + needle.len();
+        match body[after..].chars().next() {
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => {}
+            _ => return true,
+        }
+        start = after;
+    }
+    false
 }
 
 fn environment_text(settings: &[index::Setting], values: &[(String, String)]) -> Option<String> {

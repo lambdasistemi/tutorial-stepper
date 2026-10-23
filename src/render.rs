@@ -6,8 +6,16 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 ///
 /// `highlight` is the 1-based line of the opening fence of the next command.
 /// The rendered text uses ANSI for bold, inline code and links. The next
-/// command's block is preceded by the word `next`.
-pub(crate) fn render(markdown: &str, width: usize, highlight: Option<usize>) -> String {
+/// command's block is preceded by the word `next`. `notes` are `NAME=value`
+/// lines drawn above the fence that starts on that line. When `values` is
+/// set, a fence whose `if` names another value is left out.
+pub(crate) fn render(
+    markdown: &str,
+    width: usize,
+    highlight: Option<usize>,
+    notes: &[(usize, String)],
+    values: Option<&[(String, String)]>,
+) -> String {
     let width = width.max(1);
     let mut blocks = Vec::new();
     let mut text = String::new();
@@ -90,7 +98,21 @@ pub(crate) fn render(markdown: &str, width: usize, highlight: Option<usize>) -> 
         let piece = match block {
             Block::Plain(line) => wrap_styled(&line, width, "", ""),
             Block::Item(line) => wrap_styled(&line, width, "• ", "  "),
-            Block::Code(code) => render_code(&code, width, highlight),
+            Block::Code(code) => {
+                if !fence_belongs(&code.info, values) {
+                    String::new()
+                } else {
+                    let mut piece = String::new();
+                    if let Some(note) = note_for(notes, code.line) {
+                        if !note.is_empty() {
+                            piece.push_str(&wrap_styled(note, width, "", ""));
+                            piece.push('\n');
+                        }
+                    }
+                    piece.push_str(&render_code(&code, width, highlight));
+                    piece
+                }
+            }
         };
         if piece.is_empty() {
             continue;
@@ -150,6 +172,28 @@ fn render_code(code: &Code, width: usize, highlight: Option<usize>) -> String {
     out
 }
 
+fn fence_belongs(info: &str, values: Option<&[(String, String)]>) -> bool {
+    let Some(values) = values else {
+        return true;
+    };
+    let Some(token) = info
+        .split_whitespace()
+        .find(|token| token.trim_matches(|ch| ch == '{' || ch == '}').starts_with("if="))
+    else {
+        return true;
+    };
+    let token = token.trim_matches(|ch| ch == '{' || ch == '}');
+    let Some((name, value)) = token.strip_prefix("if=").and_then(|rest| rest.split_once(':'))
+    else {
+        return true;
+    };
+    values.iter().any(|(key, chosen)| key == name && chosen == value)
+}
+
+fn note_for(notes: &[(usize, String)], line: usize) -> Option<&str> {
+    notes.iter().find(|(number, _)| *number == line).map(|(_, note)| note.as_str())
+}
+
 fn line_number(markdown: &str, offset: usize) -> usize {
     markdown[..offset.min(markdown.len())].bytes().filter(|byte| *byte == b'\n').count() + 1
 }
@@ -164,6 +208,8 @@ pub(crate) struct FoldedCommand {
     pub body: String,
     /// An observation. Labelled when it is not the next command.
     pub observation: bool,
+    /// `NAME=value` for settings the command reads. Empty when it reads none.
+    pub beside: String,
 }
 
 /// The commands on a page, each named with its window.
@@ -178,6 +224,10 @@ pub(crate) fn render_folded(
     let mut out = String::new();
     for command in commands {
         let mut piece = wrap_styled(&paint(&command.window, true, false, false), width, "", "");
+        if !command.beside.is_empty() {
+            piece.push('\n');
+            piece.push_str(&wrap_styled(&command.beside, width, "", ""));
+        }
         if highlight == Some(command.line) {
             piece.push('\n');
             piece.push_str(&paint("next", true, false, false));
@@ -365,7 +415,7 @@ echo hi
 ```
 ";
         let fence = markdown.lines().position(|line| line.starts_with("```")).unwrap() + 1;
-        let text = render(markdown, 40, Some(fence));
+        let text = render(markdown, 40, Some(fence), &[], None);
         let shown = plain(&text);
         assert!(shown.contains("Title"), "{shown}");
         assert!(text.contains("\u{1b}[1mTitle") || text.contains("\u{1b}[1m"), "{text:?}");
@@ -388,7 +438,7 @@ echo hi
     #[test]
     fn wrapping_breaks_on_words_and_ignores_ansi_width() {
         let markdown = "one two three four five six seven eight nine ten\n";
-        let text = render(markdown, 12, None);
+        let text = render(markdown, 12, None, &[], None);
         let shown = plain(&text);
         assert!(shown.contains('\n'), "the paragraph did not wrap:\n{shown}");
         for line in shown.lines() {
@@ -398,7 +448,7 @@ echo hi
             .replace('\n', " ")
             .split_whitespace()
             .eq(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]));
-        let bold = render("**abcdefghij** klmnopqrstuv\n", 12, None);
+        let bold = render("**abcdefghij** klmnopqrstuv\n", 12, None, &[], None);
         for line in plain(&bold).lines() {
             assert!(visible_width(line) <= 12, "styled line wider than 12: {line:?} in {bold:?}");
         }
@@ -415,7 +465,7 @@ shown
 echo observed
 ```
 ";
-        let text = plain(&render(markdown, 40, None));
+        let text = plain(&render(markdown, 40, None, &[], None));
         assert!(text.contains("shown only"), "{text}");
         assert!(text.contains("observation"), "{text}");
         assert!(!text.contains("next"), "{text}");
@@ -429,12 +479,14 @@ echo observed
                 window: "alice".to_string(),
                 body: "echo fold-first\n".to_string(),
                 observation: false,
+                beside: String::new(),
             },
             FoldedCommand {
                 line: 9,
                 window: "bob".to_string(),
                 body: "echo seen\n".to_string(),
                 observation: true,
+                beside: String::new(),
             },
         ];
         let shown = plain(&render_folded(&commands, 40, Some(5)));

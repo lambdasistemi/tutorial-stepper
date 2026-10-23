@@ -1284,3 +1284,174 @@ fn an_observation_run_twice_is_recorded_at_two_positions() {
     assert!(face.position().contains("done = true"), "{}", face.position());
     assert_eq!(face.shown_lines("bob", "seen-early"), 2, "{}", face.log("bob"));
 }
+
+fn settings_tutorial() -> (TutorialGuard, PathBuf) {
+    let parent = std::env::temp_dir().join(format!(
+        "tutorial-stepper-face-src-{}-{}",
+        std::process::id(),
+        unique()
+    ));
+    let dir = parent.join("settings-face");
+    fs::create_dir_all(&dir).expect("the tutorial directory is created");
+    fs::write(
+        dir.join("tutorial.toml"),
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[setting]]
+name = \"SIGNING\"
+default = \"external\"
+values = [\"external\", \"internal\"]
+
+[[setting]]
+name = \"PACE\"
+default = \"slow\"
+values = [\"slow\", \"fast\"]
+
+[[path]]
+name = \"careful\"
+values = { SIGNING = \"external\", PACE = \"slow\" }
+
+[[path]]
+name = \"quick\"
+values = { SIGNING = \"internal\", PACE = \"fast\" }
+",
+    )
+    .expect("the index is written");
+    fs::write(
+        dir.join("welcome.md"),
+        "\
+```bash { window=bob }
+echo \"$SIGNING $PACE\"
+```
+
+```bash { window=bob if=SIGNING:external }
+echo branch-external
+```
+
+```bash { window=bob if=SIGNING:internal }
+echo branch-internal
+```
+
+```bash { window=bob if=PACE:slow }
+echo branch-slow
+```
+
+```bash { window=bob if=PACE:fast }
+echo branch-fast
+```
+",
+    )
+    .expect("the page is written");
+    (TutorialGuard(parent), dir)
+}
+
+#[test]
+fn the_choice_lists_each_setting_and_an_untested_combination_is_announced_once() {
+    let (_keep, tutorial) = settings_tutorial();
+    let face = Face::launch(tutorial, true);
+    let page = face.wait_page("Choose the settings");
+    assert!(page.contains("> external"), "{page}");
+    assert!(page.contains("> slow"), "{page}");
+    assert!(page.contains("internal"), "{page}");
+    assert!(page.contains("fast"), "{page}");
+    assert!(page.contains("down and j"), "{page}");
+    assert!(page.contains("right and l"), "{page}");
+    assert!(page.contains("Enter starts the tutorial"), "{page}");
+    assert!(page.contains("q quits"), "{page}");
+    assert!(!page.contains("This combination is not a tested path."), "{page}");
+    assert!(!page.contains("branch-external"), "{page}");
+    assert!(!face.run_dir().join(".env").is_file(), "the choice wrote .env before Enter");
+    face.send(&["Right"]);
+    let page = face.wait_page("> internal");
+    assert!(page.contains("This combination is not a tested path."), "{page}");
+    assert!(!page.contains("> external"), "{page}");
+    face.send(&["h"]);
+    let page = face.wait_page("> external");
+    assert!(!page.contains("This combination is not a tested path."), "{page}");
+    face.send(&["j"]);
+    face.send(&["l"]);
+    let page = face.wait_page("> fast");
+    assert!(page.contains("This combination is not a tested path."), "{page}");
+    assert!(page.contains("> external"), "{page}");
+    face.send(&["Enter"]);
+    let page = face.wait_page("SIGNING=external PACE=fast");
+    assert!(page.contains("echo"), "{page}");
+    assert!(!page.contains("This combination is not a tested path."), "{page}");
+    assert!(page.contains("branch-external"), "{page}");
+    assert!(page.contains("branch-fast"), "{page}");
+    assert!(!page.contains("branch-internal"), "{page}");
+    assert!(!page.contains("branch-slow"), "{page}");
+    let env = fs::read_to_string(face.run_dir().join(".env")).expect(".env is written");
+    assert_eq!(env, "SIGNING=external\nPACE=fast\n");
+    face.send(&["Enter"]);
+    let log = face.wait_log("bob", "external fast");
+    assert!(log.contains("external fast"), "{log}");
+}
+
+#[test]
+fn quitting_the_choice_writes_no_environment_and_starts_no_shell() {
+    let (_keep, tutorial) = settings_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Choose the settings");
+    face.send(&["q"]);
+    face.wait_until(Duration::from_secs(10), "the choice to quit", |face| {
+        (!face.run_dir().join(".env").exists()
+            && !face.server_up()
+            && !face.run_dir().join("bob").exists())
+        .then_some(())
+    });
+}
+
+#[test]
+fn a_later_visit_continues_and_choosing_again_keeps_the_earlier_folder() {
+    let (_keep, tutorial) = settings_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Choose the settings");
+    face.send(&["Enter"]);
+    let page = face.wait_page("SIGNING=external PACE=slow");
+    assert!(!page.contains("This combination is not a tested path."), "{page}");
+    fs::write(face.run_dir().join("kept-by-the-earlier-run"), "yes")
+        .expect("the marker is written");
+    let env = fs::read_to_string(face.run_dir().join(".env")).expect(".env is written");
+    assert_eq!(env, "SIGNING=external\nPACE=slow\n");
+    face.send(&["q"]);
+    face.attach_again();
+    let page = face.wait_page("n starts a new run");
+    assert!(page.contains("Enter continues"), "{page}");
+    assert!(page.contains("SIGNING=external"), "{page}");
+    face.send(&["Enter"]);
+    let page = face.wait_page("Enter runs it");
+    assert!(page.contains("SIGNING=external PACE=slow"), "{page}");
+    assert!(
+        face.run_dir().join("kept-by-the-earlier-run").is_file(),
+        "continuing moved the folder"
+    );
+    face.send(&["q"]);
+    face.attach_again();
+    face.wait_page("n starts a new run");
+    face.send(&["n"]);
+    face.wait_page("Choose the settings");
+    let socket = face.socket().expect("the server is up");
+    let panes =
+        face.tmux(&socket, &["list-panes", "-a", "-F", "#{window_name} #{pane_current_command}"]);
+    let listed = String::from_utf8_lossy(&panes.stdout);
+    assert!(panes.status.success(), "{listed}");
+    assert!(listed.contains("tutorial-stepper"), "{listed}");
+    assert!(!listed.contains("bash"), "{listed}");
+    assert!(!listed.contains("zsh"), "{listed}");
+    let run = face.run_dir();
+    let name = run.file_name().expect("the run folder has a name").to_string_lossy();
+    let aside = run.with_file_name(format!("{name}.1"));
+    assert!(aside.join("kept-by-the-earlier-run").is_file(), "the earlier folder was deleted");
+    assert_eq!(
+        fs::read_to_string(aside.join(".env")).unwrap_or_default(),
+        "SIGNING=external\nPACE=slow\n"
+    );
+    assert!(!run.join("kept-by-the-earlier-run").exists(), "the new run kept the earlier files");
+    assert!(!run.join(".env").exists(), "the new run kept the earlier .env");
+}

@@ -1,6 +1,6 @@
 # Playing a tutorial in the terminal
 
-A learner runs `tutorial-stepper play` on a tutorial directory. The stepper starts its own tmux server, one shell per window the index declares, and attaches the learner's terminal to it. The page sits beside the window of the next command. Enter runs that command. `f` folds the explanations away, and `f` again brings them back. `o` lists the observations already reached, and choosing one runs it in its window without moving the next command. `q` closes the page and leaves the windows running, and a later `play` of the same tutorial comes back to the same place, explanations folded or not as the learner left them.
+A learner runs `tutorial-stepper play` on a tutorial directory. The stepper starts its own tmux server and attaches the learner's terminal to it. When the tutorial declares settings, the page offers them before any shell starts. One shell then starts per window the index declares. The page sits beside the window of the next command. Enter runs that command. `f` folds the explanations away, and `f` again brings them back. `o` lists the observations already reached, and choosing one runs it in its window without moving the next command. `q` closes the page and leaves the windows running, and a later `play` of the same tutorial comes back to the same place, explanations folded or not as the learner left them.
 
 ## Who it is for
 
@@ -101,10 +101,30 @@ In a terminal, `play` attaches the learner's terminal to the server. When standa
 
 When the index names a set-up script, the page shows the script before the first command. Enter runs it. `q` quits without running it. A later `play` of the same run does not ask again.
 
-The script is the same one the unattended run runs: bash, in the run folder, as the user who started `play`. The unattended run runs it only with `--run-setup`, and runs it before any shell starts. The face starts the shells first, so the page can show the script, and then runs it when the learner presses Enter.
+The script is the same one the unattended run runs: bash, in the run folder, as the user who started `play`. The unattended run runs it only with `--run-setup`, and runs it before any shell starts. The face starts the shells first, so the page can show the script, and then runs it when the learner presses Enter. When the tutorial declares settings, that choice is made before those shells start.
 
 As root, the script is refused before a server starts. The message is the same as for the unattended run: `play does not run the set-up script <script> as root`.
 
 ## The values in force
 
-The face plays the tutorial's default values once. It does not ask the learner to choose. When the index declares settings, the page shows them as `NAME=value`, in the order the index declares them. The shells load those values from `.env` before the first command. That file is the one [Playing a tutorial unattended](play.md) describes. When the tutorial declares tested paths and the defaults are not one of them, the page says once: `This combination is not a tested path.`
+When the index declares settings, the page offers each one before the first page and before any shell starts. Each setting lists its allowed values, and the default is already selected. Up and `k`, down and `j` move between settings. Left and `h`, right and `l` change the selected value. Enter starts the tutorial. `q` quits: nothing is written and no shell starts.
+
+Any combination is played, including one the author has not named as a tested path. While that combination is selected, the choice says `This combination is not a tested path.` The tutorial pages do not repeat it. When the tutorial names no tested path, or the chosen values are one of them, the choice says nothing about that.
+
+Enter writes `.env` in the run folder, one `NAME=value` line per setting, in the order the index declares them. The shells load that file before their first command. The same file is the one [Playing a tutorial unattended](play.md) describes. A command whose text reads a setting shows those values beside it, as `NAME=value`, in that same order. A command that does not read a setting shows no such line.
+
+A later `play` of a run that already chose shows the values in force. Enter continues at the saved place. `n` starts a new run: the earlier folder is moved aside, to a name ending in `.1`, then `.2`, and so on, and is not deleted. The new run starts at the original path and offers the choice again.
+
+```mermaid
+flowchart TD
+  choice["Choose each setting before the first page"]
+  warn["An untested combination is announced once"]
+  env["Enter writes .env and the shells load it"]
+  beside["A command that reads a setting shows the value beside it"]
+  again["n starts a new run and keeps the earlier folder"]
+  choice --> warn
+  warn --> env
+  env --> beside
+  beside --> again
+  again --> choice
+```

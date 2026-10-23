@@ -4,8 +4,9 @@ use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
+use std::time::Duration;
 
 use std::os::unix::process::CommandExt;
 
@@ -15,20 +16,20 @@ use crate::tutorial::{self, FaceOpen, FaceTutorial, PlayKind};
 
 /// Play `dir` in the terminal. `run` overrides the folder under the home directory.
 pub(crate) fn play(dir: &Path, run: Option<&Path>) -> u8 {
-    let book = match tutorial::open_for_face(dir) {
+    let opened = match tutorial::open_for_face(dir) {
         FaceOpen::Problems(problems) => return tutorial::report_problems(dir, &problems),
-        FaceOpen::Ready(book) => book,
+        FaceOpen::Ready(book) => *book,
     };
-    if book.windows.is_empty() {
+    if opened.windows.is_empty() {
         eprintln!("a tutorial needs at least one window");
         return 1;
     }
-    let script = book.setup.as_ref().map(|(name, _)| name.as_str());
+    let script = opened.setup.as_ref().map(|(name, _)| name.as_str());
     if let Err(message) = tutorial::refuse_setup_as_root(script) {
         eprint!("{message}");
         return 1;
     }
-    let needs = book
+    let needs = opened
         .needs
         .iter()
         .map(|(program, minimum)| (program.as_str(), minimum.as_deref()))
@@ -48,18 +49,41 @@ pub(crate) fn play(dir: &Path, run: Option<&Path>) -> u8 {
         eprint!("{message}");
         return 1;
     }
+    let saved = read_saved_values(&run);
+    let book = match &saved {
+        Some(values) => match tutorial::open_face_with(dir, Some(values)) {
+            FaceOpen::Problems(problems) => return tutorial::report_problems(dir, &problems),
+            FaceOpen::Ready(book) => *book,
+        },
+        None => opened,
+    };
     let tmux = match play::require_program("tmux") {
         Ok(tmux) => tmux,
         Err(failure) => return report(failure),
     };
     let had_session = session_path(&run).is_file();
     let resumed = session_alive(&run, &tmux);
+    let choosing = !book.settings.is_empty() && saved.is_none() && !resumed;
     let mut session = if resumed {
         match read_session(&run) {
             Ok(session) => session,
             Err(message) => {
                 eprint!("{message}");
                 return 1;
+            }
+        }
+    } else if choosing {
+        let command = match page_command(dir, &run) {
+            Ok(command) => command,
+            Err(failure) => return report(failure),
+        };
+        match Session::start_page(tmux, &run, book.shell, &command) {
+            Ok(session) => session,
+            Err(failure) => {
+                if !had_session {
+                    let _ = fs::remove_dir_all(&run);
+                }
+                return report(failure);
             }
         }
     } else {
@@ -89,14 +113,16 @@ pub(crate) fn play(dir: &Path, run: Option<&Path>) -> u8 {
             return 1;
         }
     }
-    let cursor = load_cursor(&run, &book);
-    let window = acting_window(&book, cursor.index);
-    if let Err(failure) = ensure_page(&session, dir, &run, &window) {
-        if !resumed && !had_session {
-            drop(session);
-            let _ = fs::remove_dir_all(&run);
+    if !choosing {
+        let cursor = load_cursor(&run, &book);
+        let window = acting_window(&book, cursor.index);
+        if let Err(failure) = ensure_page(&session, dir, &run, &window) {
+            if !resumed && !had_session {
+                drop(session);
+                let _ = fs::remove_dir_all(&run);
+            }
+            return report(failure);
         }
-        return report(failure);
     }
     let socket = session.socket().to_string();
     let tmux_bin = session.tmux().to_path_buf();
@@ -120,16 +146,11 @@ pub(crate) fn play(dir: &Path, run: Option<&Path>) -> u8 {
 
 /// The page pane. `run` is the folder the learner's `play` created.
 pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
-    let book = match tutorial::open_for_face(dir) {
+    let owned = absolute(run);
+    let run = owned.as_path();
+    let defaults = match tutorial::open_for_face(dir) {
         FaceOpen::Problems(problems) => return tutorial::report_problems(dir, &problems),
-        FaceOpen::Ready(book) => book,
-    };
-    let session = match read_session(run) {
-        Ok(session) => session,
-        Err(message) => {
-            eprint!("{message}");
-            return 1;
-        }
+        FaceOpen::Ready(book) => *book,
     };
     let pane = std::env::var("TMUX_PANE").unwrap_or_default();
     if !pane.is_empty() {
@@ -141,6 +162,10 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
             eprint!("{message}");
             return 1;
         }
+    };
+    let (book, session) = match start_page_session(defaults, dir, run, &pane, &keys) {
+        PageStart::Exit(code) => return code,
+        PageStart::Ready(started) => *started,
     };
     if book.setup.is_some() && !setup_done_path(run).is_file() && !agree_setup(&book, run, &keys) {
         return 0;
@@ -349,6 +374,397 @@ fn toggle_fold(cursor: &mut Cursor, run: &Path, book: &FaceTutorial) {
     let _ = save_cursor(run, book, cursor);
 }
 
+enum PageStart {
+    Exit(u8),
+    Ready(Box<(FaceTutorial, Session)>),
+}
+
+struct ChoiceFailure {
+    message: String,
+    session: Option<Box<Session>>,
+}
+
+enum Key {
+    Byte(u8),
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Quit,
+}
+
+const CHOICE_STATUS: &str = "Up and k, down and j move between settings. \
+Left and h, right and l change the value. \
+Enter starts the tutorial. q quits.";
+
+const CONTINUE_STATUS: &str = "Enter continues this run\nn starts a new run and keeps this folder";
+
+fn start_page_session(
+    defaults: FaceTutorial,
+    dir: &Path,
+    run: &Path,
+    pane: &str,
+    keys: &Keys,
+) -> PageStart {
+    if defaults.settings.is_empty() {
+        return read_ready(defaults, run);
+    }
+    if read_saved_values(run).is_none() {
+        return choose(&defaults, dir, run, pane, keys, None);
+    }
+    let saved = read_saved_values(run);
+    let book = match tutorial::open_face_with(dir, saved.as_deref()) {
+        FaceOpen::Problems(problems) => {
+            return PageStart::Exit(tutorial::report_problems(dir, &problems))
+        }
+        FaceOpen::Ready(book) => *book,
+    };
+    let session = match read_session(run) {
+        Ok(session) => session,
+        Err(message) => {
+            eprint!("{message}");
+            return PageStart::Exit(1);
+        }
+    };
+    resume(book, defaults, dir, run, pane, keys, session)
+}
+
+fn read_ready(book: FaceTutorial, run: &Path) -> PageStart {
+    match read_session(run) {
+        Ok(session) => PageStart::Ready(Box::new((book, session))),
+        Err(message) => {
+            eprint!("{message}");
+            PageStart::Exit(1)
+        }
+    }
+}
+
+fn resume(
+    book: FaceTutorial,
+    defaults: FaceTutorial,
+    dir: &Path,
+    run: &Path,
+    pane: &str,
+    keys: &Keys,
+    session: Session,
+) -> PageStart {
+    let mut session = Some(session);
+    loop {
+        draw_continue(&book);
+        match keys.next_key() {
+            Key::Enter => {
+                let Some(session) = session.take() else {
+                    return PageStart::Exit(1);
+                };
+                return PageStart::Ready(Box::new((book, session)));
+            }
+            Key::Quit => return PageStart::Exit(0),
+            Key::Byte(b'n') => break,
+            _ => {}
+        }
+    }
+    let Some(session) = session.take() else {
+        return PageStart::Exit(1);
+    };
+    match move_run_aside(session, run, pane) {
+        Ok(session) => choose(&defaults, dir, run, pane, keys, Some(session)),
+        Err(message) => {
+            draw(&message, "q quits");
+            let _ = keys.next();
+            PageStart::Exit(0)
+        }
+    }
+}
+
+fn choose(
+    defaults: &FaceTutorial,
+    dir: &Path,
+    run: &Path,
+    pane: &str,
+    keys: &Keys,
+    mut existing: Option<Session>,
+) -> PageStart {
+    let mut picker = Picker::new(defaults);
+    draw_choice(defaults, &picker);
+    loop {
+        match keys.next_key() {
+            Key::Quit => {
+                abandon_choice(run);
+                return PageStart::Exit(0);
+            }
+            Key::Enter => {
+                match confirm_choice(defaults, &picker, dir, run, pane, existing.take()) {
+                    Ok((book, session)) => return PageStart::Ready(Box::new((book, session))),
+                    Err(failed) => {
+                        existing = failed.session.map(|session| *session);
+                        draw(&failed.message, "Enter tries again · q quits");
+                    }
+                }
+            }
+            Key::Up | Key::Byte(b'k') => {
+                picker.shift_setting(defaults, -1);
+                draw_choice(defaults, &picker);
+            }
+            Key::Down | Key::Byte(b'j') => {
+                picker.shift_setting(defaults, 1);
+                draw_choice(defaults, &picker);
+            }
+            Key::Left | Key::Byte(b'h') => {
+                picker.shift_value(defaults, -1);
+                draw_choice(defaults, &picker);
+            }
+            Key::Right | Key::Byte(b'l') => {
+                picker.shift_value(defaults, 1);
+                draw_choice(defaults, &picker);
+            }
+            Key::Byte(_) => {}
+        }
+    }
+}
+
+fn confirm_choice(
+    defaults: &FaceTutorial,
+    picker: &Picker,
+    dir: &Path,
+    run: &Path,
+    pane: &str,
+    existing: Option<Session>,
+) -> Result<(FaceTutorial, Session), ChoiceFailure> {
+    let chosen = picker.chosen(defaults);
+    let book = match tutorial::open_face_with(dir, Some(&chosen)) {
+        FaceOpen::Ready(book) => *book,
+        FaceOpen::Problems(problems) => {
+            let message = problems
+                .iter()
+                .map(|problem| {
+                    format!("{}:{}: {}", problem.relative, problem.line, problem.message)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ChoiceFailure { message, session: existing.map(Box::new) });
+        }
+    };
+    let mut session = match existing {
+        Some(session) => session,
+        None => match read_session(run) {
+            Ok(session) => session,
+            Err(message) => return Err(ChoiceFailure { message, session: None }),
+        },
+    };
+    if let Err(failure) = session.open_shells(&book.windows, book.environment.as_deref()) {
+        return Err(ChoiceFailure {
+            message: report_text(&failure),
+            session: Some(Box::new(session)),
+        });
+    }
+    if let Err(message) = write_session(run, &session) {
+        return Err(ChoiceFailure { message, session: Some(Box::new(session)) });
+    }
+    let window = first_window(&book);
+    if !pane.is_empty() && !window.is_empty() && session.place_page(pane, &window).is_ok() {
+        session.release_holding();
+    }
+    Ok((book, session))
+}
+
+/// The page pane dies with the window that holds it, so the pane moves first.
+/// The process keeps the renamed directory as its working directory, so later
+/// files are written at the original path.
+fn move_run_aside(mut session: Session, run: &Path, pane: &str) -> Result<Session, String> {
+    if !pane.is_empty() {
+        session.park_page(pane).map_err(|failure| report_text(&failure))?;
+    }
+    session.close_other_windows().map_err(|failure| report_text(&failure))?;
+    let aside = aside_path(run);
+    fs::rename(run, &aside).map_err(|error| format!("cannot keep the earlier run: {error}\n"))?;
+    if let Err(failure) = session.retarget(run) {
+        let _ = fs::rename(&aside, run);
+        return Err(report_text(&failure));
+    }
+    session.remember_page(pane);
+    write_atomic(&page_pane_path(run), &format!("{pane}\n"))?;
+    write_session(run, &session)?;
+    Ok(session)
+}
+
+fn aside_path(run: &Path) -> PathBuf {
+    let name = run.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut number = 1_u32;
+    loop {
+        let candidate = run.with_file_name(format!("{name}.{number}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        number += 1;
+    }
+}
+
+fn abandon_choice(run: &Path) {
+    let text = fs::read_to_string(session_path(run)).ok();
+    let document = text.as_deref().and_then(|text| text.parse::<toml_edit::DocumentMut>().ok());
+    let socket = document
+        .as_ref()
+        .and_then(|document| document.get("socket"))
+        .and_then(toml_edit::Item::as_str)
+        .map(str::to_string);
+    let tmux = document
+        .as_ref()
+        .and_then(|document| document.get("tmux"))
+        .and_then(toml_edit::Item::as_str)
+        .map(PathBuf::from);
+    let _ = fs::remove_dir_all(state_dir(run));
+    let (Some(tmux), Some(socket)) = (tmux, socket) else {
+        return;
+    };
+    let _ = Command::new(tmux)
+        .args(["-f", "/dev/null", "-L", &socket, "kill-server"])
+        .env_remove("TMUX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+}
+
+fn read_saved_values(run: &Path) -> Option<Vec<(String, String)>> {
+    let text = fs::read_to_string(run.join(".env")).ok()?;
+    if text.is_empty() {
+        return None;
+    }
+    let mut values = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            return None;
+        }
+        let (name, value) = line.split_once('=')?;
+        if name.is_empty() || value.is_empty() {
+            return None;
+        }
+        values.push((name.to_string(), value.to_string()));
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+struct Picker {
+    setting: usize,
+    value: Vec<usize>,
+}
+
+impl Picker {
+    fn new(book: &FaceTutorial) -> Self {
+        Self {
+            setting: 0,
+            value: book
+                .settings
+                .iter()
+                .map(|setting| {
+                    setting.values.iter().position(|value| value == &setting.default).unwrap_or(0)
+                })
+                .collect(),
+        }
+    }
+
+    fn chosen(&self, book: &FaceTutorial) -> Vec<(String, String)> {
+        book.settings
+            .iter()
+            .enumerate()
+            .map(|(index, setting)| {
+                let selected = self.value.get(index).copied().unwrap_or(0);
+                let text = setting
+                    .values
+                    .get(selected)
+                    .cloned()
+                    .unwrap_or_else(|| setting.default.clone());
+                (setting.name.clone(), text)
+            })
+            .collect()
+    }
+
+    fn shift_setting(&mut self, book: &FaceTutorial, delta: isize) {
+        self.setting = shift(self.setting, book.settings.len(), delta);
+    }
+
+    fn shift_value(&mut self, book: &FaceTutorial, delta: isize) {
+        let len = book.settings.get(self.setting).map(|setting| setting.values.len()).unwrap_or(0);
+        if let Some(slot) = self.value.get_mut(self.setting) {
+            *slot = shift(*slot, len, delta);
+        }
+    }
+}
+
+fn shift(index: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (index as isize + delta).rem_euclid(len as isize) as usize
+    }
+}
+
+fn draw_choice(book: &FaceTutorial, picker: &Picker) {
+    let mut body = String::from("Choose the settings\n");
+    for (index, setting) in book.settings.iter().enumerate() {
+        body.push('\n');
+        body.push_str(&setting.name);
+        body.push('\n');
+        let selected = picker.value.get(index).copied().unwrap_or(0);
+        for (value_index, value) in setting.values.iter().enumerate() {
+            if value_index == selected {
+                body.push_str("> ");
+            } else {
+                body.push_str("  ");
+            }
+            body.push_str(value);
+            body.push('\n');
+        }
+    }
+    if untested(&book.tested, &picker.chosen(book)) {
+        body.push_str("\nThis combination is not a tested path.\n");
+    }
+    draw(&body, CHOICE_STATUS);
+}
+
+fn draw_continue(book: &FaceTutorial) {
+    let line = book
+        .values
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    draw(&format!("This run is using {line}\n"), CONTINUE_STATUS);
+}
+
+fn untested(tested: &[Vec<(String, String)>], chosen: &[(String, String)]) -> bool {
+    !tested.is_empty() && !tested.iter().any(|path| path.as_slice() == chosen)
+}
+
+fn notes_for(book: &FaceTutorial, page: &str) -> Vec<(usize, String)> {
+    book.steps
+        .iter()
+        .filter(|step| step.page == page)
+        .filter_map(|step| {
+            let beside = tutorial::values_beside(&step.body, &book.values);
+            if beside.is_empty() {
+                None
+            } else {
+                Some((step.line, beside))
+            }
+        })
+        .collect()
+}
+
+fn first_window(book: &FaceTutorial) -> String {
+    book.steps
+        .first()
+        .map(|step| step.window.clone())
+        .or_else(|| book.windows.first().map(|(name, _)| name.clone()))
+        .unwrap_or_default()
+}
+
 fn agree_setup(book: &FaceTutorial, run: &Path, keys: &Keys) -> bool {
     let Some((name, script)) = &book.setup else {
         return true;
@@ -394,14 +810,6 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
     }
     let width = if pane.is_empty() { 80 } else { session.pane_width(pane).max(8) };
     let mut header = String::new();
-    if let Some(line) = &book.settings_line {
-        header.push_str(line);
-        header.push('\n');
-        if book.untested_settings {
-            header.push_str("This combination is not a tested path.\n");
-        }
-        header.push('\n');
-    }
     if cursor.lost {
         header.push_str(
             "The saved command is no longer in the tutorial. Starting at the beginning.\n\n",
@@ -417,6 +825,7 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
         .pages
         .get(cursor.view)
         .map(|page| {
+            let notes = notes_for(book, &page.path);
             if cursor.folded {
                 let commands = book
                     .steps
@@ -427,11 +836,14 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
                         window: step.window.clone(),
                         body: step.body.clone(),
                         observation: step.kind == PlayKind::Observation,
+                        beside: tutorial::values_beside(&step.body, &book.values),
                     })
                     .collect::<Vec<_>>();
                 render::render_folded(&commands, width, highlight)
             } else {
-                render::render(&page.markdown, width, highlight)
+                let values =
+                    if book.settings.is_empty() { None } else { Some(book.values.as_slice()) };
+                render::render(&page.markdown, width, highlight, &notes, values)
             }
         })
         .unwrap_or_default();
@@ -693,6 +1105,38 @@ impl Keys {
         self.rx.recv().unwrap_or(b'q')
     }
 
+    fn next_key(&self) -> Key {
+        let byte = self.next();
+        if byte != 0x1b {
+            return match byte {
+                b'\r' | b'\n' => Key::Enter,
+                b'q' => Key::Quit,
+                other => Key::Byte(other),
+            };
+        }
+        let second = match self.rx.recv_timeout(Duration::from_millis(150)) {
+            Ok(second) => second,
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                return Key::Byte(byte);
+            }
+        };
+        if second != b'[' && second != b'O' {
+            return Key::Byte(byte);
+        }
+        loop {
+            match self.rx.recv_timeout(Duration::from_millis(150)) {
+                Ok(b'A') => return Key::Up,
+                Ok(b'B') => return Key::Down,
+                Ok(b'C') => return Key::Right,
+                Ok(b'D') => return Key::Left,
+                Ok(digit) if digit.is_ascii_digit() || digit == b';' => {}
+                Ok(_) | Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                    return Key::Byte(byte);
+                }
+            }
+        }
+    }
+
     fn poll_interrupt(&self) -> Wait {
         let mut interrupt = false;
         while let Ok(byte) = self.rx.try_recv() {
@@ -757,15 +1201,19 @@ fn ensure_page(session: &Session, dir: &Path, run: &Path, window: &str) -> Resul
         }
     }
     let _ = fs::remove_file(&pane_file);
+    let command = page_command(dir, run)?;
+    session.split_page(window, &command)
+}
+
+fn page_command(dir: &Path, run: &Path) -> Result<String, Failure> {
     let exe = std::env::current_exe()
         .map_err(|error| Failure::Report(format!("cannot find this program: {error}\n")))?;
-    let command = format!(
+    Ok(format!(
         "exec {} play --page --run {} {}",
         play::sh_single(&exe.display().to_string()),
         play::sh_single(&absolute(run).display().to_string()),
         play::sh_single(&absolute(dir).display().to_string()),
-    );
-    session.split_page(window, &command)
+    ))
 }
 
 fn resolve_run(dir: &Path, run: Option<&Path>) -> Result<PathBuf, String> {
