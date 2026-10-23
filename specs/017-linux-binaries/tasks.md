@@ -25,10 +25,10 @@ Test first. The subject is each binary. This needs a container daemon, so it is 
 
 ## Phase 4: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#release-artifacts`, then `sha256sum -c`, and `file` on both binaries.
-- [ ] Each binary prints `--version` and checks an example in a clean Ubuntu 24.04 container.
-- [ ] `nix shell nixpkgs#actionlint -c actionlint`
+- [x] `nix flake check`
+- [x] `nix build .#release-artifacts`, then `sha256sum -c`, and `file` on both binaries.
+- [x] Each binary prints `--version` and checks an example in a clean Ubuntu 24.04 container.
+- [x] `nix shell nixpkgs#actionlint -c actionlint`
 
 ## Dependencies
 
