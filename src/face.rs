@@ -163,6 +163,10 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
         let key = keys.next();
         if cursor.pending.is_some() {
             match key {
+                b'f' => {
+                    toggle_fold(&mut cursor, run, &book);
+                    continue;
+                }
                 b'\r' | b'\n' => cursor.pending = None,
                 b's' => {
                     cursor.pending = None;
@@ -178,6 +182,10 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
             }
         } else {
             match key {
+                b'f' => {
+                    toggle_fold(&mut cursor, run, &book);
+                    continue;
+                }
                 b'\r' | b'\n' => {}
                 b'e' if cursor.index < book.steps.len() => {}
                 b's' => {
@@ -263,6 +271,13 @@ struct Cursor {
     lost: bool,
     /// The line the shell accepted, shown until the next command starts.
     ran: Option<String>,
+    /// The explanations are hidden.
+    folded: bool,
+}
+
+fn toggle_fold(cursor: &mut Cursor, run: &Path, book: &FaceTutorial) {
+    cursor.folded = !cursor.folded;
+    let _ = save_cursor(run, book, cursor);
 }
 
 fn agree_setup(book: &FaceTutorial, run: &Path, keys: &Keys) -> bool {
@@ -328,7 +343,24 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
     let body = book
         .pages
         .get(cursor.view)
-        .map(|page| render::render(&page.markdown, width, highlight))
+        .map(|page| {
+            if cursor.folded {
+                let commands = book
+                    .steps
+                    .iter()
+                    .filter(|step| step.page == page.path)
+                    .map(|step| render::FoldedCommand {
+                        line: step.line,
+                        window: step.window.clone(),
+                        body: step.body.clone(),
+                        observation: step.kind == PlayKind::Observation,
+                    })
+                    .collect::<Vec<_>>();
+                render::render_folded(&commands, width, highlight)
+            } else {
+                render::render(&page.markdown, width, highlight)
+            }
+        })
         .unwrap_or_default();
     let mut extra = String::new();
     if let (Some(pending), Some(step)) = (&cursor.pending, book.steps.get(cursor.index)) {
@@ -356,24 +388,23 @@ fn draw_status(status: &str) {
 }
 
 fn status_line(book: &FaceTutorial, cursor: &Cursor) -> String {
-    if cursor.pending.is_some() {
-        return "Enter retries · s skips · q quits".to_string();
-    }
-    if cursor.index >= book.steps.len() {
-        return "That was the tutorial. The windows stay. q closes the page · b back · n next page · p previous"
-            .to_string();
-    }
-    let step = &book.steps[cursor.index];
-    let on_page = book.pages.get(cursor.view).is_some_and(|page| page.path == step.page);
-    if !on_page {
-        return "n/p page · Enter runs the next command · e edits · q quits".to_string();
-    }
-    let verb = if step.kind == PlayKind::Observation {
-        "Enter runs this observation · e edits · s skips · b back · n/p · q quits"
+    let line = if cursor.pending.is_some() {
+        "Enter retries · s skips · q quits"
+    } else if cursor.index >= book.steps.len() {
+        "That was the tutorial. The windows stay. q closes the page · b back · n next page · p previous"
     } else {
-        "Enter runs it · e edits · s skips · b back · n/p page · q quits"
+        let step = &book.steps[cursor.index];
+        let on_page = book.pages.get(cursor.view).is_some_and(|page| page.path == step.page);
+        if !on_page {
+            "n/p page · Enter runs the next command · e edits · q quits"
+        } else if step.kind == PlayKind::Observation {
+            "Enter runs this observation · e edits · s skips · b back · n/p · q quits"
+        } else {
+            "Enter runs it · e edits · s skips · b back · n/p page · q quits"
+        }
     };
-    verb.to_string()
+    let fold = if cursor.folded { "f unfolds" } else { "f folds" };
+    format!("{line}\n{fold}")
 }
 
 fn noun(kind: PlayKind) -> &'static str {
@@ -675,37 +706,48 @@ fn required_table_str(table: &toml_edit::Table, key: &str) -> Result<String, Str
 }
 
 fn load_cursor(run: &Path, book: &FaceTutorial) -> Cursor {
-    let fallback =
-        Cursor { view: view_for(book, 0), index: 0, pending: None, lost: false, ran: None };
+    let mut cursor = Cursor {
+        view: view_for(book, 0),
+        index: 0,
+        pending: None,
+        lost: false,
+        ran: None,
+        folded: false,
+    };
     let Ok(text) = fs::read_to_string(position_path(run)) else {
-        return fallback;
+        return cursor;
     };
     let Ok(document) = text.parse::<toml_edit::DocumentMut>() else {
-        return fallback;
+        return cursor;
     };
-    let view = document
+    cursor.folded = document.get("folded").and_then(toml_edit::Item::as_bool).unwrap_or(false);
+    cursor.view = document
         .get("view")
         .and_then(toml_edit::Item::as_str)
         .and_then(|path| page_index(book, path))
         .unwrap_or(0);
     if document.get("done").and_then(toml_edit::Item::as_bool) == Some(true) {
-        return Cursor { view, index: book.steps.len(), pending: None, lost: false, ran: None };
+        cursor.index = book.steps.len();
+        return cursor;
     }
     let Some(page) = document.get("page").and_then(toml_edit::Item::as_str) else {
-        return Cursor { view, ..fallback };
+        return cursor;
     };
     let Some(line) = document.get("line").and_then(toml_edit::Item::as_integer) else {
-        return Cursor { view, ..fallback };
+        return cursor;
     };
     let Ok(line) = usize::try_from(line) else {
-        return Cursor { view, ..fallback };
+        return cursor;
     };
     let Some(index) = book.steps.iter().position(|step| step.page == page && step.line == line)
     else {
-        return Cursor { view, index: 0, pending: None, lost: true, ran: None };
+        cursor.index = 0;
+        cursor.lost = true;
+        return cursor;
     };
-    let pending = pending_from(&document);
-    Cursor { view, index, pending, lost: false, ran: None }
+    cursor.index = index;
+    cursor.pending = pending_from(&document);
+    cursor
 }
 
 fn pending_from(document: &toml_edit::DocumentMut) -> Option<Pending> {
@@ -718,7 +760,7 @@ fn pending_from(document: &toml_edit::DocumentMut) -> Option<Pending> {
 
 fn save_cursor(run: &Path, book: &FaceTutorial, cursor: &Cursor) -> Result<(), String> {
     let view = book.pages.get(cursor.view).map(|page| page.path.as_str()).unwrap_or("");
-    let mut text = format!("view = {}\n", toml_string(view));
+    let mut text = format!("view = {}\nfolded = {}\n", toml_string(view), cursor.folded);
     if cursor.index >= book.steps.len() {
         text.push_str("done = true\n");
     } else {

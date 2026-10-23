@@ -128,6 +128,7 @@ fn play_help_describes_that_command_only() {
     assert!(text.contains("$HOME"), "play help did not name the home directory:\n{text}");
     assert!(text.contains("Enter"), "play help did not name Enter:\n{text}");
     assert!(text.contains("e places"), "play help did not name e:\n{text}");
+    assert!(text.contains("f folds"), "play help did not name f:\n{text}");
     assert!(text.contains("q closes"), "play help did not name q:\n{text}");
     assert!(!text.contains("--page"), "play help showed the hidden page flag:\n{text}");
     assert!(

@@ -154,6 +154,53 @@ fn line_number(markdown: &str, offset: usize) -> usize {
     markdown[..offset.min(markdown.len())].bytes().filter(|byte| *byte == b'\n').count() + 1
 }
 
+/// One command left on a folded page.
+pub(crate) struct FoldedCommand {
+    /// 1-based line of the opening fence.
+    pub line: usize,
+    /// Window this command runs in.
+    pub window: String,
+    /// Fence body, as written.
+    pub body: String,
+    /// An observation. Labelled when it is not the next command.
+    pub observation: bool,
+}
+
+/// The commands on a page, each named with its window.
+///
+/// `highlight` is the 1-based line of the next command. Prose is not drawn.
+pub(crate) fn render_folded(
+    commands: &[FoldedCommand],
+    width: usize,
+    highlight: Option<usize>,
+) -> String {
+    let width = width.max(1);
+    let mut out = String::new();
+    for command in commands {
+        let mut piece = wrap_styled(&paint(&command.window, true, false, false), width, "", "");
+        if highlight == Some(command.line) {
+            piece.push('\n');
+            piece.push_str(&paint("next", true, false, false));
+        } else if command.observation {
+            piece.push('\n');
+            piece.push_str(&paint("observation", false, false, true));
+        }
+        let body = command.body.trim_end_matches('\n');
+        if !body.is_empty() {
+            for line in body.split('\n') {
+                piece.push('\n');
+                let painted = paint(line, false, true, false);
+                piece.push_str(&wrap_styled(&painted, width, "│ ", "│ "));
+            }
+        }
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&piece);
+    }
+    out
+}
+
 fn paint(text: &str, bold: bool, code: bool, dim: bool) -> String {
     if text.is_empty() || (!bold && !code && !dim) {
         return text.to_string();
@@ -282,7 +329,7 @@ fn wrap_styled(text: &str, width: usize, prefix: &str, cont: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{render, visible_width};
+    use super::{render, render_folded, visible_width, FoldedCommand};
 
     fn plain(text: &str) -> String {
         let mut out = String::new();
@@ -372,5 +419,31 @@ echo observed
         assert!(text.contains("shown only"), "{text}");
         assert!(text.contains("observation"), "{text}");
         assert!(!text.contains("next"), "{text}");
+    }
+
+    #[test]
+    fn a_folded_page_names_each_command_with_its_window() {
+        let commands = [
+            FoldedCommand {
+                line: 5,
+                window: "alice".to_string(),
+                body: "echo fold-first\n".to_string(),
+                observation: false,
+            },
+            FoldedCommand {
+                line: 9,
+                window: "bob".to_string(),
+                body: "echo seen\n".to_string(),
+                observation: true,
+            },
+        ];
+        let shown = plain(&render_folded(&commands, 40, Some(5)));
+        assert!(shown.starts_with("alice\nnext\n"), "{shown}");
+        assert!(shown.contains("echo fold-first"), "{shown}");
+        assert!(shown.contains("bob\nobservation\n"), "{shown}");
+        assert!(shown.contains("echo seen"), "{shown}");
+        for line in shown.lines() {
+            assert!(line.chars().count() <= 40, "line wider than the pane: {line:?}");
+        }
     }
 }
