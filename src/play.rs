@@ -5,8 +5,12 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Once};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use signal_hook::consts::{SIGINT, SIGTERM};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, Value};
 
@@ -18,6 +22,34 @@ pub(crate) struct DriveExtras<'a> {
     pub environment: Option<&'a str>,
     /// Tested path name recorded on each transcript command. Absent when the run is not a path.
     pub path: Option<&'a str>,
+}
+
+/// A signal arrived: the exit code the run cleans up with.
+static GOT_SIGINT: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
+static GOT_SIGTERM: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
+static SIGNALS_ONCE: Once = Once::new();
+
+/// Catch `SIGINT`/`SIGTERM` as flags the wait loops drain.
+///
+/// The default disposition would kill the process at once and leave the tmux
+/// server behind. A set flag instead reaches the next loop turn, which kills
+/// the server and exits 130/143. A normal exit still drops [`Session`].
+fn ensure_signal_handlers() {
+    SIGNALS_ONCE.call_once(|| {
+        let _ = signal_hook::flag::register(SIGINT, Arc::clone(&GOT_SIGINT));
+        let _ = signal_hook::flag::register(SIGTERM, Arc::clone(&GOT_SIGTERM));
+    });
+}
+
+/// The exit code when a signal arrived, before the next wait.
+fn signal_exit_code() -> Option<i32> {
+    if GOT_SIGINT.load(Ordering::Relaxed) {
+        Some(130)
+    } else if GOT_SIGTERM.load(Ordering::Relaxed) {
+        Some(143)
+    } else {
+        None
+    }
 }
 
 /// Why a play stopped.
@@ -120,12 +152,13 @@ pub(crate) fn drive(
     if windows.is_empty() {
         return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
     }
+    ensure_signal_handlers();
     let tmux = require_program("tmux")?;
+    let shell_path = require_shell(shell)?;
     let shell_program = match shell {
         crate::index::Shell::Bash => "bash",
         crate::index::Shell::Zsh => "zsh",
     };
-    let shell_path = require_program(shell_program)?;
     ensure_transcript_directory(transcript)?;
     let mut session = Session::prepare(tmux, windows, run, shell_program, &extras, None)?;
     if let Some((name, script)) = setup {
@@ -172,6 +205,41 @@ pub(crate) fn run_setup(
 
 pub(crate) fn require_program(name: &str) -> Result<PathBuf, Failure> {
     find_program(name).ok_or_else(|| Failure::Report(format!("{name} is not on PATH\n")))
+}
+
+/// The shell can run the stepper's prompt hook. For bash that is readline:
+/// `bind` must work. `stdenv`'s bash has no readline and fails it.
+fn shell_hook_check(shell_path: &Path, shell: crate::index::Shell) -> Option<String> {
+    if !matches!(shell, crate::index::Shell::Bash) {
+        return None;
+    }
+    let output = Command::new(shell_path)
+        .args(["--noprofile", "--norc", "-c", "bind -v"])
+        .env_remove("TMUX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => None,
+        _ => Some(format!(
+            "bash at {} lacks readline: the stepper's prompt hook needs bind\n",
+            shell_path.display()
+        )),
+    }
+}
+
+/// [`require_program`] plus the hook check, before any server or directory.
+pub(crate) fn require_shell(shell: crate::index::Shell) -> Result<PathBuf, Failure> {
+    let name = match shell {
+        crate::index::Shell::Bash => "bash",
+        crate::index::Shell::Zsh => "zsh",
+    };
+    let path = require_program(name)?;
+    if let Some(message) = shell_hook_check(&path, shell) {
+        return Err(Failure::Report(message));
+    }
+    Ok(path)
 }
 
 /// The first need that is not met, in the order given. A need with no minimum is presence only.
@@ -361,10 +429,12 @@ impl Session {
                 launcher_path: control_dir.join(format!("launch-{name}")),
             });
         }
-        Ok(Self {
+        let socket = format!("tutorial-stepper-{suffix}");
+        let marker = format!("tutorial-stepper-prompt-{suffix}");
+        let session = Self {
             tmux,
-            socket: format!("tutorial-stepper-{suffix}"),
-            marker: format!("tutorial-stepper-prompt-{suffix}"),
+            socket,
+            marker,
             run_dir,
             keep_run,
             retain: false,
@@ -373,7 +443,26 @@ impl Session {
             shell_name: shell_name.to_string(),
             env_path,
             path_name: extras.path.map(str::to_string),
-        })
+        };
+        Ok(session)
+    }
+
+    /// Leave no server behind on `SIGINT`/`SIGTERM`.
+    ///
+    /// A retained session keeps its server, as on a normal exit, and only
+    /// the process ends. Any other session kills its server and removes its
+    /// control directory (and the run directory when temporary).
+    fn signal_cleanup(&self) {
+        if let Some(code) = signal_exit_code() {
+            if !self.retain {
+                kill_server(&self.tmux, &self.socket);
+                remove_tree(&self.control_dir);
+                if !self.keep_run {
+                    remove_tree(&self.run_dir);
+                }
+            }
+            std::process::exit(code);
+        }
     }
 
     fn start(&mut self, shell: &Path, kind: crate::index::Shell) -> Result<(), Failure> {
@@ -599,6 +688,7 @@ impl Session {
     fn wait_for_status_lines(&self, index: usize, count: usize) -> Result<(), Failure> {
         let window = self.panes[index].name.clone();
         loop {
+            self.signal_cleanup();
             if complete_lines(&self.read_status(index)).len() >= count {
                 return Ok(());
             }
@@ -626,6 +716,7 @@ impl Session {
         let start = usize::try_from(log_from).unwrap_or(usize::MAX);
         let window = self.panes[index].name.clone();
         loop {
+            self.signal_cleanup();
             let bytes = fs::read(&self.panes[index].log_path).unwrap_or_default();
             let slice = if start <= bytes.len() { &bytes[start..] } else { &bytes[..] };
             if let Some(output) = command_output(slice, &self.marker) {
@@ -739,7 +830,8 @@ impl Session {
             crate::index::Shell::Bash => "bash",
             crate::index::Shell::Zsh => "zsh",
         };
-        let shell_path = require_program(shell_name)?;
+        let shell_path = require_shell(shell)?;
+        ensure_signal_handlers();
         let mut session = Self::prepare(
             tmux,
             windows,
@@ -816,6 +908,7 @@ impl Session {
             env_path: None,
             path_name: None,
         };
+        ensure_signal_handlers();
         match session.tmux_text(&["display-message", "-p", "-t", "play:=page", "#{pane_id}"]) {
             Ok(pane) => {
                 session.remember_page(&pane);
@@ -835,6 +928,9 @@ impl Session {
         windows: &[(String, String)],
         environment: Option<&str>,
     ) -> Result<(), Failure> {
+        let kind = self.shell_kind();
+        let shell = require_shell(kind)?;
+        ensure_signal_handlers();
         self.env_path = if let Some(text) = environment {
             let path = self.run_dir.join(".env");
             fs::write(&path, text)
@@ -862,8 +958,6 @@ impl Session {
             return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
         }
         self.panes = panes;
-        let kind = self.shell_kind();
-        let shell = require_program(&self.shell_name)?;
         self.write_hook(kind)?;
         for index in 0..self.panes.len() {
             self.write_launcher(index, &shell, kind)?;
@@ -1159,6 +1253,7 @@ impl Session {
         let window = self.panes[index].name.clone();
         let mut interrupted = false;
         loop {
+            self.signal_cleanup();
             if complete_lines(&self.read_status(index)).len() >= count {
                 return Ok(());
             }

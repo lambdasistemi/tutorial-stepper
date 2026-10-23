@@ -2134,6 +2134,102 @@ needs = [\"number-tool >= 1.2\"]
     server_is_gone(pid);
 }
 
+#[test]
+fn a_bash_without_readline_is_refused_before_any_command() {
+    let root = temp_tutorial("no-readline");
+    executable(
+        &root.join("bin"),
+        "bash",
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    *bind*) exit 1;;\n  esac\ndone\nexit 0\n",
+    );
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&root.join("bin")));
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    assert!(output.stdout.is_empty(), "{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("bash"), "{err}");
+    assert!(err.contains("readline"), "{err}");
+    assert!(err.contains("bind"), "{err}");
+    assert!(!transcript.exists(), "a refused run wrote a transcript");
+    server_is_gone(pid);
+}
+
+#[test]
+fn every_window_shell_has_its_name_in_tutorial_stepper_window() {
+    let root = temp_tutorial("window-var");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+        "```bash { window=bob }\necho $TUTORIAL_STEPPER_WINDOW\n```\n",
+    );
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play(&root, &transcript);
+    assert!(output.status.success(), "stderr:\n{}", text(&output.stderr));
+    let commands = transcript_commands(&transcript);
+    assert_eq!(string_field(commands.get(0).expect("the command"), "output"), "bob\n");
+    server_is_gone(pid);
+}
+
+fn kill_and_wait(signal: &str, pid: u32, child: std::process::Child) -> Output {
+    thread::sleep(Duration::from_secs(3));
+    let kill = Command::new("bash")
+        .args(["-c", &format!("kill -{signal} {pid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("bash sends the signal");
+    assert!(kill.status.success(), "{}", text(&kill.stderr));
+    child.wait_with_output().expect("the play command finishes")
+}
+
+fn slow_run(signal: &str) {
+    let dir = manifest_dir().join("examples/slow");
+    let transcript = temp_tutorial(&format!("slow-{signal}-transcript")).join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let child = Command::new(env!("CARGO_BIN_EXE_tutorial-stepper"))
+        .arg("play")
+        .arg("--auto")
+        .arg("--transcript")
+        .arg(&transcript)
+        .arg(&dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the tutorial-stepper binary runs");
+    let pid = child.id();
+    let output = kill_and_wait(signal, pid, child);
+    assert!(!output.status.success(), "a killed run exited 0");
+    server_is_gone(pid);
+}
+
+#[test]
+fn an_interrupted_run_leaves_no_server() {
+    slow_run("INT");
+}
+
+#[test]
+fn a_terminated_run_leaves_no_server() {
+    slow_run("TERM");
+}
+
 fn program_on_path(name: &str) -> PathBuf {
     let paths = std::env::var_os("PATH").expect("PATH");
     for dir in std::env::split_paths(&paths) {
