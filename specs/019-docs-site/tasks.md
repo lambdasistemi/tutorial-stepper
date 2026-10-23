@@ -45,11 +45,11 @@ Test first. The subject is the built site's `api/` directory and the workflow fi
 
 ## Phase 7: Verification
 
-- [ ] `nix flake check`
-- [ ] The site served on `127.0.0.1`, the front page and one page of each section fetched.
-- [ ] `tools/check_presentation.py` on the site's pages.
-- [ ] `nix shell nixpkgs#actionlint -c actionlint`
-- [ ] Every diagram rendered and looked at, in light and dark, at a desktop width and a phone width.
+- [x] `nix flake check`
+- [x] The site served on `127.0.0.1`, the front page and one page of each section fetched.
+- [x] `tools/check_presentation.py` on the site's pages.
+- [x] `nix shell nixpkgs#actionlint -c actionlint`
+- [x] Every diagram rendered and looked at, in light and dark, at a desktop width and a phone width.
 
 ## Dependencies
 
