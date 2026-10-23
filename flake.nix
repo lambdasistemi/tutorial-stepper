@@ -54,6 +54,9 @@
             tutorial-stepper-static-aarch64
             ;
           inherit release-artifacts;
+          # The Apple Silicon build compiles with this toolchain and the
+          # system linker, so the published binary does not need a Nix store.
+          rust-toolchain = rustToolchain;
         };
 
         inherit checks;

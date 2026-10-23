@@ -26,21 +26,21 @@ Test first. The subject is `SHA256SUMS` for a directory that holds the two Linux
 
 Test first. The subject is the script the macOS job will run after install.
 
-- [ ] A failing check that `examples/one-window` plays unattended in bash and, with `shell = "zsh"`, in zsh.
-- [ ] The smallest change that makes that check pass.
+- [x] A failing check that `examples/one-window` plays unattended in bash and, with `shell = "zsh"`, in zsh.
+- [x] The smallest change that makes that check pass.
 
 ## Phase 5: Continuous integration and the release
 
-- [ ] A `macos-14` job builds the binary, installs it from a temporary local tap pointed at that build, and plays the conformance example in bash and in zsh. The job does not mint a tap token and does not push.
-- [ ] The release job uploads `tutorial-stepper-<version>-aarch64-darwin.tar.gz`, rewrites `SHA256SUMS` so it lists that tarball and the two Linux binaries, and pushes `Formula/tutorial-stepper.rb` with a token minted for `homebrew-tap`.
-- [ ] `README.md` tells a Mac user how to install with Homebrew, in the same commit as that behaviour.
+- [x] A `macos-14` job builds the binary, installs it from a temporary local tap pointed at that build, and plays the conformance example in bash and in zsh. The job does not mint a tap token and does not push.
+- [x] The release job uploads `tutorial-stepper-<version>-aarch64-darwin.tar.gz`, rewrites `SHA256SUMS` so it lists that tarball and the two Linux binaries, and pushes `Formula/tutorial-stepper.rb` with a token minted for `homebrew-tap`.
+- [x] `README.md` tells a Mac user how to install with Homebrew, in the same commit as that behaviour.
 
 ## Phase 6: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix shell nixpkgs#actionlint -c actionlint`
-- [ ] The formula check, the checksum check, and the conformance check, each watched failing before the behaviour existed.
-- [ ] `brew style` on the rendered formula, when `brew` is installed on this machine.
+- [x] `nix flake check`
+- [x] `nix shell nixpkgs#actionlint -c actionlint`
+- [x] The formula check, the checksum check, and the conformance check, each watched failing before the behaviour existed.
+- [x] `brew style` on the rendered formula, when `brew` is installed on this machine.
 
 ## Dependencies
 

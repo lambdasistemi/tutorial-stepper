@@ -38,6 +38,9 @@ jobs:
           .#checks.x86_64-linux.deny
           .#checks.x86_64-linux.doc
           .#checks.x86_64-linux.version
+          .#checks.x86_64-linux.homebrew-formula
+          .#checks.x86_64-linux.release-checksums
+          .#checks.x86_64-linux.play-conformance
           .#devShells.x86_64-linux.default.inputDerivation
       - name: Copy the Linux binaries out of the store
         working-directory: checkout
@@ -183,3 +186,41 @@ jobs:
           path: linux-binaries
       - name: Version and check in Ubuntu 24.04
         run: bash scripts/ubuntu-binaries.sh linux-binaries examples
+
+  homebrew-formula:
+    name: Homebrew formula
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Formula, checksum, and both shells
+        working-directory: checkout
+        run: >-
+          nix build --quiet
+          .#checks.x86_64-linux.homebrew-formula
+          .#checks.x86_64-linux.release-checksums
+          .#checks.x86_64-linux.play-conformance
+
+  macos-formula:
+    name: macOS formula
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://paolino.cachix.org
+            extra-trusted-public-keys = paolino.cachix.org-1:ecmgO3CXdgSWA2cHlm4srknd/cLFMLmK3i3NrzeDFaE=
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Install from a temporary tap and play
+        run: bash scripts/macos-formula.sh

@@ -43,8 +43,9 @@ flowchart LR
   sums --> run
 ```
 
-The release carries two statically linked files and one checksum file.
-`<version>` is the version `--version` prints.
+The release carries two statically linked Linux files and one checksum
+file. The checksum file also lists the Apple Silicon archive. `<version>`
+is the version `--version` prints.
 
 - `tutorial-stepper-<version>-x86_64-linux`
 - `tutorial-stepper-<version>-aarch64-linux`
@@ -60,6 +61,45 @@ chmod +x tutorial-stepper-<version>-x86_64-linux
 On arm64 the file name ends in `aarch64-linux`, and the same commands
 apply. Playing a tutorial still needs tmux and bash or zsh. The binary
 does not bring them, and it installs nothing. `check` needs neither.
+
+## Install on macOS
+
+A learner on an Apple Silicon Mac installs the stepper with Homebrew.
+The formula also installs tmux, which playing a tutorial needs.
+`tutorial-stepper --version` prints the release.
+
+```mermaid
+flowchart LR
+  page["Release page"]
+  archive["Apple Silicon tarball"]
+  sums["SHA256SUMS"]
+  formula["Homebrew formula"]
+  install["brew install"]
+  run["--version prints the release"]
+  tmux["tmux is installed alongside"]
+  page --> archive
+  page --> sums
+  archive --> formula
+  sums --> formula
+  formula --> install
+  install --> run
+  install --> tmux
+```
+
+The release archive is
+`tutorial-stepper-<version>-aarch64-darwin.tar.gz`. `SHA256SUMS` lists
+that archive and the two Linux binaries. `<version>` is the version
+`--version` prints.
+
+```bash
+brew install lambdasistemi/tap/tutorial-stepper
+tutorial-stepper --version
+```
+
+Intel Macs are not built. The binary is not signed with an Apple
+Developer ID, and it is not notarised. The bash that ships with macOS
+is too old to play a tutorial. Homebrew's bash works, and so does the
+zsh that ships with macOS. `check` needs neither a shell nor tmux.
 
 ```mermaid
 flowchart LR
