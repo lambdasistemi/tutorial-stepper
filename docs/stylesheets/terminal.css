@@ -16,6 +16,44 @@ body { padding-top: 1.5rem; }
 }
 #tutorial-palette-toggle svg { display: block; }
 #tutorial-palette-toggle:focus-visible { outline: 2px solid var(--secondary-color); outline-offset: 2px; }
+/* Headings: the theme renders every level at body size, so give each level its own size. */
+#terminal-mkdocs-main-content h1 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  font-weight: 700;
+  margin: 1.5rem 0 1rem;
+}
+#terminal-mkdocs-main-content h2 {
+  font-size: 1.3rem;
+  line-height: 1.3;
+  font-weight: 700;
+  margin: 1.5rem 0 0.75rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--secondary-color);
+}
+#terminal-mkdocs-main-content h3 {
+  font-size: 1.1rem;
+  line-height: 1.3;
+  font-weight: 700;
+  margin: 1.25rem 0 0.5rem;
+}
+#terminal-mkdocs-main-content h4 {
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 1rem 0 0.5rem;
+}
+#terminal-mkdocs-main-content h5,
+#terminal-mkdocs-main-content h6 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+}
+#terminal-mkdocs-main-content h6 {
+  font-style: italic;
+  color: var(--secondary-color);
+}
 .terminal-menu ul { gap: 1rem; }
 .terminal-menu a { display: inline-block; padding: 0.5rem 0; }
 @media (min-width: 70em) {

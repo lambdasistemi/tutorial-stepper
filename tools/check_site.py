@@ -113,6 +113,20 @@ def fences_in(docs):
     return failures
 
 
+def heading_sizes(css):
+    """Map h1/h2/h3 to the font-size our stylesheet gives them, if any."""
+    found = {}
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        selector, declarations = match.group(1), match.group(2)
+        size = re.search(r"font-size:\s*([^;]+);", declarations)
+        if not size:
+            continue
+        for level in ("h1", "h2", "h3"):
+            if re.search(rf"(?<![A-Za-z0-9_-]){level}(?![A-Za-z0-9_-])", selector):
+                found.setdefault(level, size.group(1).strip())
+    return found
+
+
 def main(argv):
     if len(argv) != 3:
         print("usage: check_site.py SITE DOCS WORKFLOW", file=sys.stderr)
@@ -132,6 +146,7 @@ def main(argv):
         require_text(text, "A tutorial author", failures, "front page does not tell the author's story")
         if "mermaid" not in text or "Shells in tmux" not in text:
             failures.append("front page has no context diagram")
+        require_text(text, "planned", failures, "the front page presents the Killercoda renderer as built")
     for name, needle, message in (
         ("format", "tutorial.toml", "the format specification is missing"),
         ("commands", "tutorial-stepper check", "the command reference does not describe check"),
@@ -152,6 +167,16 @@ def main(argv):
             failures.append("the worked example did not render as a code block")
     if docs.is_dir():
         failures.extend(fences_in(docs))
+        stylesheet = docs / "stylesheets" / "terminal.css"
+        if not stylesheet.is_file():
+            failures.append(f"missing {stylesheet}")
+        else:
+            sizes = heading_sizes(stylesheet.read_text(encoding="utf-8"))
+            for level in ("h1", "h2", "h3"):
+                if level not in sizes:
+                    failures.append(f"the stylesheet gives {level} no font-size")
+            if len(set(sizes.values())) != len(sizes):
+                failures.append(f"the heading sizes are not distinct: {sizes}")
     else:
         failures.append(f"missing {docs}")
     library = page(site, "library")

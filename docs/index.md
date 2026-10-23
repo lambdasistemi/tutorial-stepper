@@ -16,7 +16,7 @@ The terminal page is described in [Playing a tutorial in the terminal](terminal.
 
 ### A tutorial author
 
-A tutorial author writes plain Markdown, with the commands in ordinary code blocks, and declares the settings and which combinations of them are tested. One source then gives three things: the tutorial learners play locally, an unattended run of each tested combination that fails in continuous integration when the tutorial stops working, and a Killercoda scenario per tested combination.
+A tutorial author writes plain Markdown, with the commands in ordinary code blocks, and declares the settings and which combinations of them are tested. One source then gives three things: the tutorial learners play locally, an unattended run of each tested combination that fails in continuous integration when the tutorial stops working, and, once the Killercoda renderer lands in a later milestone, a Killercoda scenario per tested combination.
 
 From the same source, `tutorial-stepper script` prints one bash script, each command named with its page and its window, for reading, diffing, and a quick run outside the stepper. [paolino/runmd](https://github.com/paolino/runmd) is superseded by that command.
 
@@ -24,16 +24,16 @@ The format is [Checking a tutorial's format](format.md). The unattended run is [
 
 ## How the pieces meet
 
-The author writes an index file and one Markdown file per page. The stepper reads that tutorial. It types one command at a time into shells hosted by tmux, and the shell's prompt reports when the command ended and with what status. The same stepper drives the terminal page a learner watches and the unattended run continuous integration records. The tutorial is also rendered to a Killercoda scenario and printed as one bash script. The stepper does not install anything, and it does not use the network.
+The author writes an index file and one Markdown file per page. The stepper reads that tutorial. It types one command at a time into shells hosted by tmux, and the shell's prompt reports when the command ended and with what status. The same stepper drives the terminal page a learner watches and the unattended run continuous integration records. A later milestone renders the tutorial to a Killercoda scenario; today it is printed as one bash script. The stepper does not install anything, and it does not use the network.
 
 ```mermaid
 flowchart TD
   tutorial["Tutorial files"]
   stepper["Stepper"]
-  scenario["Killercoda scenario"]
+  scenario["Killercoda scenario (planned)"]
   printed["Printed script"]
   tutorial -->|"read by"| stepper
-  tutorial -->|"rendered to"| scenario
+  tutorial -->|"renders to, planned"| scenario
   tutorial -->|"printed as"| printed
   subgraph driven ["Driven by the stepper"]
     direction LR
@@ -43,6 +43,7 @@ flowchart TD
   stepper -->|"drives"| driven
   shells["Shells in tmux"]
   stepper -->|"types into"| shells
+  style scenario stroke-dasharray:5
 ```
 
 ## Install
