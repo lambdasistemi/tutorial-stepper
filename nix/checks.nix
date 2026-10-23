@@ -99,4 +99,158 @@ in
       cmp "$work/found" "$work/expected"
       touch "$out"
     '';
+
+  # The formula a release pushes. Fails while the renderer still prints
+  # the template's placeholders.
+  homebrew-formula = pkgs.runCommand "tutorial-stepper-homebrew-formula"
+    {
+      nativeBuildInputs = [
+        pkgs.ruby
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.gnugrep
+        pkgs.gnutar
+        pkgs.gzip
+        pkgs.glibcLocales
+      ];
+      LANG = "C.UTF-8";
+      LC_ALL = "C.UTF-8";
+    }
+    ''
+      set -euo pipefail
+      mkdir -p scripts packaging/homebrew
+      cp ${../scripts/render-homebrew-formula.sh} scripts/render-homebrew-formula.sh
+      cp ${../scripts/pack-homebrew-tarball.sh} scripts/pack-homebrew-tarball.sh
+      cp ${../scripts/check-homebrew-archive.sh} scripts/check-homebrew-archive.sh
+      cp ${../packaging/homebrew/tutorial-stepper.rb.in} \
+        packaging/homebrew/tutorial-stepper.rb.in
+      chmod +x scripts/render-homebrew-formula.sh \
+        scripts/pack-homebrew-tarball.sh \
+        scripts/check-homebrew-archive.sh
+      sha=abababababababababababababababababababababababababababababababab
+      formula=$(bash scripts/render-homebrew-formula.sh 1.2.3 "$sha")
+      printf '%s\n' "$formula" > formula.rb
+      if ! printf '%s\n' "$formula" | grep -F "sha256 \"$sha\""; then
+        printf 'rendered formula does not carry the checksum\n' >&2
+        printf '%s\n' "$formula" >&2
+        exit 1
+      fi
+      printf '%s\n' "$formula" | grep -F 'depends_on "tmux"' >/dev/null
+      printf '%s\n' "$formula" | grep -F \
+        'tutorial-stepper-1.2.3-aarch64-darwin.tar.gz' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'version "1.2.3"' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'class TutorialStepper' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'bin.install "bin/tutorial-stepper"' \
+        >/dev/null
+      if printf '%s\n' "$formula" | grep -F '@'; then
+        printf 'placeholder left in the formula\n' >&2
+        exit 1
+      fi
+      ruby -c formula.rb
+      local_url='file:///tmp/fresh/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz'
+      local_formula=$(bash scripts/render-homebrew-formula.sh 1.2.3 "$sha" "$local_url")
+      printf '%s\n' "$local_formula" | grep -F "url \"$local_url\"" >/dev/null
+      if bash scripts/render-homebrew-formula.sh 1.2 "$sha"; then
+        printf 'a short version was accepted\n' >&2
+        exit 1
+      fi
+      if bash scripts/render-homebrew-formula.sh 1.2.3 xyz; then
+        printf 'a short checksum was accepted\n' >&2
+        exit 1
+      fi
+
+      # Homebrew enters one top-level directory, then runs install.
+      # The binary-only archive is the case the macOS job builds.
+      stage=$(mktemp -d)
+      mkdir -p "$stage/bin"
+      printf 'binary\n' > "$stage/bin/tutorial-stepper"
+      chmod 755 "$stage/bin/tutorial-stepper"
+      archive_dir=$(mktemp -d)
+      bash scripts/pack-homebrew-tarball.sh "$stage" 1.2.3 "$archive_dir" \
+        >/dev/null
+      bash scripts/check-homebrew-archive.sh \
+        "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        formula.rb
+      mkdir -p "$stage/libexec/lib"
+      printf 'lib\n' > "$stage/libexec/lib/libfoo.dylib"
+      chmod 755 "$stage/libexec/lib/libfoo.dylib"
+      bash scripts/pack-homebrew-tarball.sh "$stage" 1.2.3 "$archive_dir" \
+        >/dev/null
+      tar -tzf "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        | grep -F 'libexec/lib/libfoo.dylib' >/dev/null
+      bash scripts/check-homebrew-archive.sh \
+        "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        formula.rb
+      touch "$out"
+    '';
+
+  # The checksum file a learner downloads. Fails while the Apple Silicon
+  # tarball is optional.
+  release-checksums = pkgs.runCommand "tutorial-stepper-release-checksums"
+    {
+      nativeBuildInputs = [
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.gnugrep
+        pkgs.glibcLocales
+      ];
+      LANG = "C.UTF-8";
+      LC_ALL = "C.UTF-8";
+    }
+    ''
+      set -euo pipefail
+      script=${../scripts/release-checksums.sh}
+      work=$(mktemp -d)
+      cd "$work"
+      printf 'x' > tutorial-stepper-1.2.3-x86_64-linux
+      printf 'y' > tutorial-stepper-1.2.3-aarch64-linux
+      printf 'z' > tutorial-stepper-1.2.3-aarch64-darwin.tar.gz
+      bash "$script" "$work"
+      if ! grep -F tutorial-stepper-1.2.3-aarch64-darwin.tar.gz SHA256SUMS; then
+        printf 'SHA256SUMS does not list the Apple Silicon tarball\n' >&2
+        cat SHA256SUMS >&2
+        exit 1
+      fi
+      sha256sum -c SHA256SUMS
+      test "$(wc -l < SHA256SUMS)" -eq 3
+      rm tutorial-stepper-1.2.3-aarch64-darwin.tar.gz SHA256SUMS
+      if bash "$script" "$work"; then
+        printf 'a directory without the tarball was accepted\n' >&2
+        exit 1
+      fi
+      printf 'z' > tutorial-stepper-1.2.3-aarch64-darwin.tar.gz
+      printf 'old' > tutorial-stepper-linux-x86_64
+      if bash "$script" "$work"; then
+        printf 'the old Linux name was accepted\n' >&2
+        exit 1
+      fi
+      rm tutorial-stepper-linux-x86_64
+      mv tutorial-stepper-1.2.3-aarch64-darwin.tar.gz \
+        tutorial-stepper-9.9.9-aarch64-darwin.tar.gz
+      if bash "$script" "$work"; then
+        printf 'mixed versions were accepted\n' >&2
+        exit 1
+      fi
+      touch "$out"
+    '';
+
+  # The script the macOS job runs after install. Fails while zsh is not played.
+  play-conformance = pkgs.runCommand "tutorial-stepper-play-conformance"
+    {
+      nativeBuildInputs = [
+        tutorial-stepper
+        pkgs.bashInteractive
+        pkgs.zsh
+        pkgs.tmux
+        pkgs.coreutils
+        pkgs.glibcLocales
+      ];
+      LANG = "C.UTF-8";
+      LC_ALL = "C.UTF-8";
+    }
+    ''
+      set -euo pipefail
+      bash ${../scripts/play-conformance.sh} ${../examples}
+      touch "$out"
+    '';
 }
