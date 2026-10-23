@@ -9,7 +9,7 @@ use std::thread;
 
 use std::os::unix::process::CommandExt;
 
-use crate::play::{self, Failure, Session, SessionRecord, Wait};
+use crate::play::{self, Failure, Session, SessionRecord, StepOutcome, Wait};
 use crate::render;
 use crate::tutorial::{self, FaceOpen, FaceTutorial, PlayKind};
 
@@ -161,10 +161,38 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
         }
         draw_frame(&book, &session, &pane, &cursor);
         let key = keys.next();
+        cursor.notice = None;
+        if cursor.listing.is_some() {
+            match key {
+                b'o' => cursor.listing = None,
+                b'q' => {
+                    cursor.listing = None;
+                    let _ = save_cursor(run, &book, &cursor);
+                    return 0;
+                }
+                b'0'..=b'9' => {
+                    if let Some(typed) = cursor.listing.as_mut() {
+                        typed.push(char::from(key));
+                    }
+                }
+                b'\r' | b'\n' => {
+                    let typed = cursor.listing.take().unwrap_or_default();
+                    if !typed.is_empty() {
+                        choose_observation(&book, &session, &mut cursor, run, &keys, &typed);
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
         if cursor.pending.is_some() {
             match key {
                 b'f' => {
                     toggle_fold(&mut cursor, run, &book);
+                    continue;
+                }
+                b'o' => {
+                    cursor.listing = Some(String::new());
                     continue;
                 }
                 b'\r' | b'\n' => cursor.pending = None,
@@ -184,6 +212,10 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
             match key {
                 b'f' => {
                     toggle_fold(&mut cursor, run, &book);
+                    continue;
+                }
+                b'o' => {
+                    cursor.listing = Some(String::new());
                     continue;
                 }
                 b'\r' | b'\n' => {}
@@ -221,6 +253,39 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
             continue;
         }
         let push = key == b'e';
+        if !push && book.steps[cursor.index].kind == PlayKind::Observation {
+            cursor.view = view_for(&book, cursor.index);
+            cursor.lost = false;
+            cursor.ran = None;
+            let step = book.steps[cursor.index].clone();
+            let position = position_at(&book, &cursor);
+            match run_observation(&session, &step, &position, &observations_path(run), &keys) {
+                ObservationRun::Ran(outcome) => {
+                    cursor.ran = Some(outcome.command);
+                    advance(&mut cursor, &book);
+                }
+                ObservationRun::Busy => {
+                    cursor.notice = Some(format!("window {} is busy", step.window));
+                }
+                ObservationRun::Mismatch(outcome) => {
+                    cursor.pending = Some(Pending {
+                        got: outcome.status,
+                        expected: step.expected,
+                        command: outcome.command,
+                    });
+                }
+                ObservationRun::Broken(failure) => {
+                    draw(&report_text(&failure), "q quits");
+                    let _ = save_cursor(run, &book, &cursor);
+                    if keys.next() == b'q' {
+                        return 0;
+                    }
+                    continue;
+                }
+            }
+            let _ = save_cursor(run, &book, &cursor);
+            continue;
+        }
         cursor.view = view_for(&book, cursor.index);
         cursor.lost = false;
         cursor.ran = None;
@@ -273,6 +338,10 @@ struct Cursor {
     ran: Option<String>,
     /// The explanations are hidden.
     folded: bool,
+    /// Digits typed on the observation list. Absent when the page is showing.
+    listing: Option<String>,
+    /// Shown until the next key: a busy window, or a number that is not on the list.
+    notice: Option<String>,
 }
 
 fn toggle_fold(cursor: &mut Cursor, run: &Path, book: &FaceTutorial) {
@@ -319,6 +388,10 @@ fn agree_setup(book: &FaceTutorial, run: &Path, keys: &Keys) -> bool {
 }
 
 fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Cursor) {
+    if cursor.listing.is_some() {
+        draw_list(book, cursor);
+        return;
+    }
     let width = if pane.is_empty() { 80 } else { session.pane_width(pane).max(8) };
     let mut header = String::new();
     if let Some(line) = &book.settings_line {
@@ -363,10 +436,15 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
         })
         .unwrap_or_default();
     let mut extra = String::new();
+    if let Some(notice) = &cursor.notice {
+        extra.push('\n');
+        extra.push_str(notice);
+        extra.push('\n');
+    }
     if let (Some(pending), Some(step)) = (&cursor.pending, book.steps.get(cursor.index)) {
         let body =
             if pending.command.is_empty() { step.body.as_str() } else { pending.command.as_str() };
-        extra = format!(
+        extra.push_str(&format!(
             "\n{}:{}: {} exited {}, expected {}\n{}",
             step.page,
             step.line,
@@ -374,9 +452,11 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
             pending.got,
             pending.expected,
             body
-        );
-    } else if let Some(ran) = &cursor.ran {
-        extra = format!("\nThe shell ran:\n{ran}");
+        ));
+    } else if cursor.notice.is_none() {
+        if let Some(ran) = &cursor.ran {
+            extra.push_str(&format!("\nThe shell ran:\n{ran}"));
+        }
     }
     draw(&format!("{header}{body}{extra}"), &status_line(book, cursor));
 }
@@ -404,7 +484,119 @@ fn status_line(book: &FaceTutorial, cursor: &Cursor) -> String {
         }
     };
     let fold = if cursor.folded { "f unfolds" } else { "f folds" };
-    format!("{line}\n{fold}")
+    format!("{line}\n{fold} · o observes")
+}
+
+fn draw_list(book: &FaceTutorial, cursor: &Cursor) {
+    let reached = book
+        .steps
+        .iter()
+        .take(cursor.index)
+        .filter(|step| step.kind == PlayKind::Observation)
+        .collect::<Vec<_>>();
+    let mut body = if reached.is_empty() {
+        "No observation has been reached yet.\n".to_string()
+    } else {
+        let mut text = String::from("Observations already reached\n");
+        for (number, step) in reached.iter().enumerate() {
+            let first = step.body.lines().next().unwrap_or("").trim_end();
+            text.push_str(&format!("{}  {}  {first}\n", number + 1, step.window));
+        }
+        text
+    };
+    if let Some(notice) = &cursor.notice {
+        body.push('\n');
+        body.push_str(notice);
+        body.push('\n');
+    }
+    let typed = cursor.listing.as_deref().unwrap_or("");
+    let status = if typed.is_empty() {
+        "Type a number and press Enter · o closes the list".to_string()
+    } else {
+        format!("{typed} · Enter runs it · o closes the list")
+    };
+    draw(&body, &status);
+}
+
+enum ObservationRun {
+    Ran(StepOutcome),
+    Busy,
+    Mismatch(StepOutcome),
+    Broken(Failure),
+}
+
+fn run_observation(
+    session: &Session,
+    step: &tutorial::PlayStep,
+    position: &str,
+    record: &Path,
+    keys: &Keys,
+) -> ObservationRun {
+    match session.window_is_busy(&step.window) {
+        Ok(true) => ObservationRun::Busy,
+        Err(failure) => ObservationRun::Broken(failure),
+        Ok(false) => {
+            draw_status(&format!("running in {} · c sends Ctrl-C", step.window));
+            match session.run_step_until(step, || keys.poll_interrupt()) {
+                Ok(outcome) => match play::record_observation(record, step, &outcome, position) {
+                    Ok(()) if outcome.status == step.expected => ObservationRun::Ran(outcome),
+                    Ok(()) => ObservationRun::Mismatch(outcome),
+                    Err(failure) => ObservationRun::Broken(failure),
+                },
+                Err(failure) => ObservationRun::Broken(failure),
+            }
+        }
+    }
+}
+
+fn choose_observation(
+    book: &FaceTutorial,
+    session: &Session,
+    cursor: &mut Cursor,
+    run: &Path,
+    keys: &Keys,
+    typed: &str,
+) {
+    let Some(number) = typed.parse::<usize>().ok().filter(|number| *number > 0) else {
+        cursor.listing = Some(String::new());
+        cursor.notice = Some(format!("There is no observation {typed}."));
+        return;
+    };
+    let Some(step) = book
+        .steps
+        .iter()
+        .take(cursor.index)
+        .filter(|step| step.kind == PlayKind::Observation)
+        .nth(number - 1)
+        .cloned()
+    else {
+        cursor.listing = Some(String::new());
+        cursor.notice = Some(format!("There is no observation {number}."));
+        return;
+    };
+    let position = position_at(book, cursor);
+    match run_observation(session, &step, &position, &observations_path(run), keys) {
+        ObservationRun::Ran(outcome) => cursor.ran = Some(outcome.command),
+        ObservationRun::Busy => {
+            cursor.notice = Some(format!("window {} is busy", step.window));
+        }
+        ObservationRun::Mismatch(outcome) => {
+            cursor.notice = Some(format!(
+                "{}:{}: observation exited {}, expected {}\n{}",
+                step.page, step.line, outcome.status, step.expected, outcome.command
+            ));
+        }
+        ObservationRun::Broken(failure) => cursor.notice = Some(report_text(&failure)),
+    }
+}
+
+fn position_at(book: &FaceTutorial, cursor: &Cursor) -> String {
+    if cursor.index >= book.steps.len() {
+        "done".to_string()
+    } else {
+        let step = &book.steps[cursor.index];
+        format!("{}:{}", step.page, step.line)
+    }
 }
 
 fn noun(kind: PlayKind) -> &'static str {
@@ -713,6 +905,8 @@ fn load_cursor(run: &Path, book: &FaceTutorial) -> Cursor {
         lost: false,
         ran: None,
         folded: false,
+        listing: None,
+        notice: None,
     };
     let Ok(text) = fs::read_to_string(position_path(run)) else {
         return cursor;
@@ -811,6 +1005,10 @@ fn page_pane_path(run: &Path) -> PathBuf {
 
 fn setup_done_path(run: &Path) -> PathBuf {
     state_dir(run).join("setup-done")
+}
+
+fn observations_path(run: &Path) -> PathBuf {
+    state_dir(run).join("observations.toml")
 }
 
 fn absolute(path: &Path) -> PathBuf {

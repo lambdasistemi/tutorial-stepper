@@ -1039,3 +1039,248 @@ fn the_fold_holds_across_pages_and_across_quitting() {
     assert!(full.contains("Later explanation"), "{full}");
     assert!(face.position().contains("folded = false"), "{}", face.position());
 }
+
+fn observations_tutorial() -> (TutorialGuard, PathBuf) {
+    let parent = std::env::temp_dir().join(format!(
+        "tutorial-stepper-face-src-{}-{}",
+        std::process::id(),
+        unique()
+    ));
+    let dir = parent.join("observe");
+    fs::create_dir_all(&dir).expect("the tutorial directory is created");
+    fs::write(
+        dir.join("tutorial.toml"),
+        "\
+pages = [\"welcome.md\", \"later.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+",
+    )
+    .expect("the index is written");
+    fs::write(
+        dir.join("welcome.md"),
+        "\
+# First page
+
+```bash { window=bob }
+echo before-observe
+```
+
+```bash { window=bob mode=observe }
+echo seen-early
+```
+
+```bash { window=bob }
+echo after-observe
+```
+",
+    )
+    .expect("the first page is written");
+    fs::write(
+        dir.join("later.md"),
+        "\
+# Second page
+
+A later explanation.
+
+```bash { window=alice mode=observe }
+echo seen-later
+```
+",
+    )
+    .expect("the second page is written");
+    (TutorialGuard(parent), dir)
+}
+
+fn observation_record(face: &Face) -> String {
+    fs::read_to_string(face.run_dir().join(".tutorial-stepper/observations.toml"))
+        .unwrap_or_default()
+}
+
+fn open_observation_list(face: &Face) -> String {
+    face.send(&["o"]);
+    face.wait_page("o closes the list")
+}
+
+fn close_observation_list(face: &Face) {
+    face.send(&["o"]);
+    face.wait_page("First page");
+}
+
+/// The opening fence of `echo before-observe`.
+const BEFORE_OBSERVE: &str = "line = 3\n";
+/// The opening fence of `echo seen-early`.
+const EARLY_OBSERVE: &str = "line = 7\n";
+/// The opening fence of `echo after-observe`.
+const AFTER_OBSERVE: &str = "line = 11\n";
+
+#[test]
+fn the_list_holds_only_observations_already_reached() {
+    let (_keep, tutorial) = observations_tutorial();
+    let face = Face::launch(tutorial, true);
+    let page = face.wait_page("First page");
+    assert!(page.contains("o observes"), "{page}");
+    let empty = open_observation_list(&face);
+    assert!(empty.contains("No observation has been reached yet."), "{empty}");
+    assert!(!empty.contains("echo seen-early"), "{empty}");
+    assert!(!empty.contains("echo seen-later"), "{empty}");
+    assert!(!empty.contains("First page"), "{empty}");
+    close_observation_list(&face);
+    assert!(face.position().contains(BEFORE_OBSERVE), "{}", face.position());
+
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the observation to be next", |face| {
+        face.position().contains(EARLY_OBSERVE).then_some(())
+    });
+    let still_early = open_observation_list(&face);
+    assert!(still_early.contains("No observation has been reached yet."), "{still_early}");
+    assert!(!still_early.contains("echo seen-early"), "{still_early}");
+    close_observation_list(&face);
+
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the command after the observation", |face| {
+        face.position().contains(AFTER_OBSERVE).then_some(())
+    });
+    let reached = open_observation_list(&face);
+    assert!(reached.contains("echo seen-early"), "{reached}");
+    assert!(reached.contains("bob"), "{reached}");
+    assert!(!reached.contains("echo seen-later"), "{reached}");
+    assert!(!reached.contains("First page"), "{reached}");
+    close_observation_list(&face);
+
+    face.send(&["b"]);
+    face.wait_until(Duration::from_secs(10), "the observation to be next again", |face| {
+        face.position().contains(EARLY_OBSERVE).then_some(())
+    });
+    let gone = open_observation_list(&face);
+    assert!(gone.contains("No observation has been reached yet."), "{gone}");
+    assert!(!gone.contains("echo seen-early"), "{gone}");
+    close_observation_list(&face);
+
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the command after the observation again", |face| {
+        face.position().contains(AFTER_OBSERVE).then_some(())
+    });
+    face.send(&["n"]);
+    let turned = face.wait_page("Second page");
+    assert!(turned.contains("echo seen-later"), "{turned}");
+    let listed = open_observation_list(&face);
+    assert!(listed.contains("echo seen-early"), "{listed}");
+    assert!(!listed.contains("echo seen-later"), "{listed}");
+    assert!(!listed.contains("Second page"), "{listed}");
+    assert!(face.position().contains(AFTER_OBSERVE), "{}", face.position());
+}
+
+#[test]
+fn choosing_an_observation_runs_it_without_moving_the_position() {
+    let (_keep, tutorial) = observations_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("First page");
+    face.send(&["s"]);
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the command after the observation", |face| {
+        face.position().contains(AFTER_OBSERVE).then_some(())
+    });
+    let before = face.position();
+    let listed = open_observation_list(&face);
+    assert!(listed.contains("echo seen-early"), "{listed}");
+    face.send(&["1", "Enter"]);
+    let ran = face.wait_until(Duration::from_secs(15), "the observation to run", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        let record = observation_record(face);
+        (text.contains("The shell ran:")
+            && text.contains("echo seen-early")
+            && face.log("bob").contains("seen-early")
+            && record.contains("position = \"welcome.md:11\"")
+            && record.contains("[[observation]]"))
+        .then_some(text)
+    });
+    assert_eq!(face.position(), before, "choosing an observation moved the next command");
+    assert!(ran.contains("echo after-observe") || face.position().contains(AFTER_OBSERVE), "{ran}");
+    assert!(!face.log("alice").contains("seen-later"), "{}", face.log("alice"));
+    let again = open_observation_list(&face);
+    assert!(again.contains("echo seen-early"), "{again}");
+    face.send(&["Enter"]);
+    face.wait_page("echo after-observe");
+    assert_eq!(face.position(), before, "closing the list moved the next command");
+    assert_eq!(observation_record(&face).matches("[[observation]]").count(), 1);
+}
+
+#[test]
+fn a_busy_window_is_named_and_the_observation_does_not_run() {
+    let (_keep, tutorial) = observations_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("First page");
+    face.send(&["s"]);
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the command after the observation", |face| {
+        face.position().contains(AFTER_OBSERVE).then_some(())
+    });
+    let before = face.position();
+    face.send_shell_text("bob", "touch started-busy && sleep 30");
+    face.send_shell("bob", &["Enter"]);
+    face.wait_until(Duration::from_secs(15), "the shell to be inside the command", |face| {
+        face.run_dir().join("bob/started-busy").is_file().then_some(())
+    });
+    let listed = open_observation_list(&face);
+    assert!(listed.contains("echo seen-early"), "{listed}");
+    face.send(&["1", "Enter"]);
+    let page = face.wait_page("window bob is busy");
+    assert!(!page.contains("The shell ran:"), "{page}");
+    assert!(!face.log("bob").contains("seen-early"), "{}", face.log("bob"));
+    assert!(
+        !observation_record(&face).contains("[[observation]]"),
+        "{}",
+        observation_record(&face)
+    );
+    assert_eq!(face.position(), before, "a busy window moved the next command");
+    assert!(face.run_dir().join("bob/started-busy").is_file(), "the command was no longer running");
+}
+
+#[test]
+fn an_observation_run_twice_is_recorded_at_two_positions() {
+    let (_keep, tutorial) = observations_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("First page");
+    face.send(&["s"]);
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the command after the observation", |face| {
+        face.position().contains(AFTER_OBSERVE).then_some(())
+    });
+    open_observation_list(&face);
+    face.send(&["1", "Enter"]);
+    face.wait_until(Duration::from_secs(15), "the first observation record", |face| {
+        let record = observation_record(face);
+        (record.contains("[[observation]]") && record.contains("position = \"welcome.md:11\""))
+            .then_some(())
+    });
+    let first = face.position();
+    face.send(&["s"]);
+    face.send(&["s"]);
+    face.wait_until(Duration::from_secs(10), "the tutorial to be finished", |face| {
+        face.position().contains("done = true").then_some(())
+    });
+    assert_ne!(face.position(), first);
+    let both = open_observation_list(&face);
+    assert!(both.contains("echo seen-early"), "{both}");
+    assert!(both.contains("echo seen-later"), "{both}");
+    face.send(&["1", "Enter"]);
+    let record =
+        face.wait_until(Duration::from_secs(15), "the second observation record", |face| {
+            let record = observation_record(face);
+            (record.matches("[[observation]]").count() == 2
+                && record.contains("position = \"done\""))
+            .then_some(record)
+        });
+    assert!(record.contains("position = \"welcome.md:11\""), "{record}");
+    assert!(face.position().contains("done = true"), "{}", face.position());
+    assert_eq!(face.shown_lines("bob", "seen-early"), 2, "{}", face.log("bob"));
+}
