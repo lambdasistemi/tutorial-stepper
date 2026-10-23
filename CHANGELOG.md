@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.3.0...v0.3.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* push the Homebrew formula with the token as basic credentials ([dd5fe8b](https://github.com/lambdasistemi/tutorial-stepper/commit/dd5fe8b982996629dd1670e67bc08d0ddaffd110)), closes [#40](https://github.com/lambdasistemi/tutorial-stepper/issues/40)
+* serve one SVG favicon instead of five missing PNGs ([58b22d3](https://github.com/lambdasistemi/tutorial-stepper/commit/58b22d3a8e2f8dc966ef0834ff83b5c13bf5b7e8))
+
 ## [0.3.0](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.2.0...v0.3.0) (2026-10-23)
 
 
