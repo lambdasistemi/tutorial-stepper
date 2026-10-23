@@ -63,7 +63,7 @@ The fence parser, the attribute spelling, and the release manifest stay as they 
 
 The unattended run and the face both paste a block as one bracketed paste. Enter submits it. Push is that paste without Enter. The shell's own bracketed paste, which bash 5.1 turns on and zsh already has, keeps a newline in the paste from running a line early.
 
-Bash records the readline buffer at the moment Enter is accepted, then the existing `PROMPT_COMMAND` writes that text and the status. zsh records the argument of `preexec`, and `precmd` writes it with the status. The first prompt is still only the shell becoming ready. A prompt redrawn because the learner pressed Ctrl-C at the prompt writes no status, so the page keeps waiting until Enter submits a line.
+Bash records the readline buffer at the moment Enter is accepted, then the existing `PROMPT_COMMAND` writes that text and the status. zsh records the editing buffer at the same moment, and `precmd` writes it with the status. An empty line does not call `preexec`, so the buffer is the source. The first prompt is still only the shell becoming ready. A prompt redrawn because the learner pressed Ctrl-C at the prompt writes no status, so the page keeps waiting until Enter submits a line.
 
 The stored command is that text, plus a final newline when the shell did not include one. A block the stepper typed, and nobody edited, is then the fence body under both shells. The transcript and the page both take this text. The error that names a status takes it too, so the line the learner sees is the line that ran.
 

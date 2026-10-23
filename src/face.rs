@@ -179,6 +179,7 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
         } else {
             match key {
                 b'\r' | b'\n' => {}
+                b'e' if cursor.index < book.steps.len() => {}
                 b's' => {
                     if cursor.index < book.steps.len() {
                         advance(&mut cursor, &book);
@@ -211,16 +212,29 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
         if cursor.index >= book.steps.len() {
             continue;
         }
+        let push = key == b'e';
         cursor.view = view_for(&book, cursor.index);
         cursor.lost = false;
+        cursor.ran = None;
         let window = acting_window(&book, cursor.index);
         draw_frame(&book, &session, &pane, &cursor);
-        draw_status(&format!("running in {window} · c sends Ctrl-C"));
         let step = &book.steps[cursor.index];
-        match session.run_step_until(step, || keys.poll_interrupt()) {
-            Ok(outcome) if outcome.status == step.expected => advance(&mut cursor, &book),
+        let expected = step.expected;
+        let outcome = if push {
+            draw_status(&format!("editing in {window} · Enter there runs it"));
+            session.push_step(step)
+        } else {
+            draw_status(&format!("running in {window} · c sends Ctrl-C"));
+            session.run_step_until(step, || keys.poll_interrupt())
+        };
+        match outcome {
+            Ok(outcome) if outcome.status == expected => {
+                cursor.ran = Some(outcome.command);
+                advance(&mut cursor, &book);
+            }
             Ok(outcome) => {
-                cursor.pending = Some(Pending { got: outcome.status, expected: step.expected });
+                cursor.pending =
+                    Some(Pending { got: outcome.status, expected, command: outcome.command });
             }
             Err(failure) => {
                 draw(&report_text(&failure), "q quits");
@@ -238,6 +252,8 @@ pub(crate) fn page(dir: &Path, run: &Path) -> u8 {
 struct Pending {
     got: u8,
     expected: u8,
+    /// The line the shell accepted. Empty when a saved position has none.
+    command: String,
 }
 
 struct Cursor {
@@ -245,6 +261,8 @@ struct Cursor {
     index: usize,
     pending: Option<Pending>,
     lost: bool,
+    /// The line the shell accepted, shown until the next command starts.
+    ran: Option<String>,
 }
 
 fn agree_setup(book: &FaceTutorial, run: &Path, keys: &Keys) -> bool {
@@ -314,6 +332,8 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
         .unwrap_or_default();
     let mut extra = String::new();
     if let (Some(pending), Some(step)) = (&cursor.pending, book.steps.get(cursor.index)) {
+        let body =
+            if pending.command.is_empty() { step.body.as_str() } else { pending.command.as_str() };
         extra = format!(
             "\n{}:{}: {} exited {}, expected {}\n{}",
             step.page,
@@ -321,8 +341,10 @@ fn draw_frame(book: &FaceTutorial, session: &Session, pane: &str, cursor: &Curso
             noun(step.kind),
             pending.got,
             pending.expected,
-            step.body
+            body
         );
+    } else if let Some(ran) = &cursor.ran {
+        extra = format!("\nThe shell ran:\n{ran}");
     }
     draw(&format!("{header}{body}{extra}"), &status_line(book, cursor));
 }
@@ -344,14 +366,14 @@ fn status_line(book: &FaceTutorial, cursor: &Cursor) -> String {
     let step = &book.steps[cursor.index];
     let on_page = book.pages.get(cursor.view).is_some_and(|page| page.path == step.page);
     if !on_page {
-        return "n next page · p previous · Enter runs the next command · q quits".to_string();
+        return "n/p page · Enter runs the next command · e edits · q quits".to_string();
     }
     let verb = if step.kind == PlayKind::Observation {
-        "Enter runs this observation"
+        "Enter runs this observation · e edits · s skips · b back · n/p · q quits"
     } else {
-        "Enter runs it"
+        "Enter runs it · e edits · s skips · b back · n/p page · q quits"
     };
-    format!("{verb} · s skips · b back · n next page · p previous · q quits")
+    verb.to_string()
 }
 
 fn noun(kind: PlayKind) -> &'static str {
@@ -653,7 +675,8 @@ fn required_table_str(table: &toml_edit::Table, key: &str) -> Result<String, Str
 }
 
 fn load_cursor(run: &Path, book: &FaceTutorial) -> Cursor {
-    let fallback = Cursor { view: view_for(book, 0), index: 0, pending: None, lost: false };
+    let fallback =
+        Cursor { view: view_for(book, 0), index: 0, pending: None, lost: false, ran: None };
     let Ok(text) = fs::read_to_string(position_path(run)) else {
         return fallback;
     };
@@ -666,7 +689,7 @@ fn load_cursor(run: &Path, book: &FaceTutorial) -> Cursor {
         .and_then(|path| page_index(book, path))
         .unwrap_or(0);
     if document.get("done").and_then(toml_edit::Item::as_bool) == Some(true) {
-        return Cursor { view, index: book.steps.len(), pending: None, lost: false };
+        return Cursor { view, index: book.steps.len(), pending: None, lost: false, ran: None };
     }
     let Some(page) = document.get("page").and_then(toml_edit::Item::as_str) else {
         return Cursor { view, ..fallback };
@@ -679,16 +702,18 @@ fn load_cursor(run: &Path, book: &FaceTutorial) -> Cursor {
     };
     let Some(index) = book.steps.iter().position(|step| step.page == page && step.line == line)
     else {
-        return Cursor { view, index: 0, pending: None, lost: true };
+        return Cursor { view, index: 0, pending: None, lost: true, ran: None };
     };
     let pending = pending_from(&document);
-    Cursor { view, index, pending, lost: false }
+    Cursor { view, index, pending, lost: false, ran: None }
 }
 
 fn pending_from(document: &toml_edit::DocumentMut) -> Option<Pending> {
     let got = document.get("got").and_then(toml_edit::Item::as_integer)?;
     let expected = document.get("expected").and_then(toml_edit::Item::as_integer)?;
-    Some(Pending { got: u8::try_from(got).ok()?, expected: u8::try_from(expected).ok()? })
+    let command =
+        document.get("command").and_then(toml_edit::Item::as_str).unwrap_or("").to_string();
+    Some(Pending { got: u8::try_from(got).ok()?, expected: u8::try_from(expected).ok()?, command })
 }
 
 fn save_cursor(run: &Path, book: &FaceTutorial, cursor: &Cursor) -> Result<(), String> {
@@ -704,6 +729,7 @@ fn save_cursor(run: &Path, book: &FaceTutorial, cursor: &Cursor) -> Result<(), S
     }
     if let Some(pending) = &cursor.pending {
         text.push_str(&format!("got = {}\nexpected = {}\n", pending.got, pending.expected));
+        text.push_str(&format!("command = {}\n", toml_string(&pending.command)));
     }
     write_atomic(&position_path(run), &text)
 }

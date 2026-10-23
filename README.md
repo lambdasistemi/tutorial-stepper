@@ -33,7 +33,7 @@ flowchart LR
   printed["One bash script of the commands"]
   source -->|"read by"| stepper
   stepper -->|"types commands into"| shells
-  shells -->|"prompt hook reports end and status"| stepper
+  shells -->|"prompt hook reports the line, the end and the status"| stepper
   stepper -->|"drives"| page
   stepper -->|"drives"| ci
   source -->|"rendered to"| killercoda

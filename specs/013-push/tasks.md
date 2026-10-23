@@ -12,10 +12,10 @@
 
 Test first. A detached tmux session and the face are the subject. `--auto` stays green, under bash and under zsh.
 
-- [ ] A failing test that `e` places a command of several lines at the prompt, in bash and in zsh, and that the command's output does not appear before Enter.
-- [ ] A failing test that editing the pushed command and pressing Enter leaves the edited line on the page, in bash and in zsh.
-- [ ] The smallest change that makes those tests pass. The prompt hook reports the accepted line. The transcript's `command`, the page, and the status error all use that line. A command nobody edited stays the fence body.
-- [ ] `docs/terminal.md` describes `e` and the line the page shows, in the same commit as that behaviour. `docs/play.md` says the transcript command is the line the hook reported. `play --help` names `e` and stays within the line limit.
+- [x] A failing test that `e` places a command of several lines at the prompt, in bash and in zsh, and that the command's output does not appear before Enter.
+- [x] A failing test that editing the pushed command and pressing Enter leaves the edited line on the page, in bash and in zsh.
+- [x] The smallest change that makes those tests pass. The prompt hook reports the accepted line. The transcript's `command`, the page, and the status error all use that line. A command nobody edited stays the fence body.
+- [x] `docs/terminal.md` describes `e` and the line the page shows, in the same commit as that behaviour. `docs/play.md` says the transcript command is the line the hook reported. `play --help` names `e` and stays within the line limit.
 
 ## Phase 3: Verification
 

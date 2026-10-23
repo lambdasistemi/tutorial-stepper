@@ -28,7 +28,7 @@ pub(crate) enum Failure {
         page: String,
         /// 1-based line of the opening fence.
         line: usize,
-        /// Fence body, as written.
+        /// The line the shell accepted.
         body: String,
         /// Status the prompt hook reported.
         got: u8,
@@ -91,6 +91,8 @@ pub(crate) struct StepOutcome {
     pub start: String,
     /// UTC time when the hook reported the end.
     pub end: String,
+    /// The line the shell accepted, ending in a newline.
+    pub command: String,
 }
 
 /// What the face wants while a command is still running.
@@ -396,12 +398,13 @@ impl Session {
                 }),
                 PlayKind::ObservationAtEnd => Some("end of path".to_string()),
             };
+            let command = outcome.command;
             entries.push(Entry {
                 path: self.path_name.clone(),
                 page: step.page.clone(),
                 line: step.line,
                 window: step.window.clone(),
-                command: step.body.clone(),
+                command: command.clone(),
                 status: outcome.status,
                 start: outcome.start,
                 end: outcome.end,
@@ -418,7 +421,7 @@ impl Session {
                 return Err(Failure::Status {
                     page: step.page.clone(),
                     line: step.line,
-                    body: step.body.clone(),
+                    body: command,
                     got: outcome.status,
                     expected: step.expected,
                     kind: step.kind,
@@ -468,21 +471,24 @@ impl Session {
     ) -> Result<(), Failure> {
         let pane = &self.panes[index];
         let status = sh_single(&pane.status_path.display().to_string());
+        let command = sh_single(&command_path(&pane.status_path, &pane.name).display().to_string());
         let prompt = sh_single(&self.marker);
         let window = sh_single(&pane.name);
         let program = sh_single(&shell.display().to_string());
         let environment = self.env_export();
+        // Bash reads HISTFILE before the hook runs, so the empty target has to
+        // be in the environment the shell starts with. The hook then unsets it.
         let launcher = match kind {
             crate::index::Shell::Bash => {
                 let hook = sh_single(&self.control_dir.join("hook").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
+                    "#!/bin/sh\nunset BASH_ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
                 )
             }
             crate::index::Shell::Zsh => {
                 let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                    "#!/bin/sh\nunset ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
                 )
             }
         };
@@ -552,8 +558,11 @@ impl Session {
         self.tmux_ok(&["pipe-pane", "-o", "-t", &target, &pipe])
     }
 
-    fn type_command(&self, index: usize, body: &str) -> Result<(), Failure> {
-        // One trailing newline is the fence. Enter after the paste submits it.
+    /// Place `body` at the prompt as one bracketed paste.
+    ///
+    /// One trailing newline belongs to the fence, not to the line. `submit`
+    /// presses Enter. A push leaves the paste unrun.
+    fn paste(&self, index: usize, body: &str, submit: bool) -> Result<(), Failure> {
         let typed = body.strip_suffix('\n').unwrap_or(body);
         let target = self.shell_target(index);
         let output = Command::new(&self.tmux)
@@ -572,7 +581,10 @@ impl Session {
             let detail = String::from_utf8_lossy(&output.stderr);
             return Err(Failure::Report(format!("tmux send-keys failed: {detail}\n")));
         }
-        self.tmux_ok(&["send-keys", "-t", &target, "Enter"])
+        if submit {
+            self.tmux_ok(&["send-keys", "-t", &target, "Enter"])?;
+        }
+        Ok(())
     }
 
     fn wait_for_status_lines(&self, index: usize, count: usize) -> Result<(), Failure> {
@@ -849,17 +861,62 @@ impl Session {
         step: &crate::tutorial::PlayStep,
         mut poll: impl FnMut() -> Wait,
     ) -> Result<StepOutcome, Failure> {
+        self.drive_step(step, true, &mut poll)
+    }
+
+    /// Paste `step` without Enter, select its shell, and wait for the learner's Enter.
+    ///
+    /// The page keeps waiting through a prompt redrawn by Ctrl-C. The end is
+    /// still the next status line, and the recorded command is the line the
+    /// shell accepted.
+    pub(crate) fn push_step(
+        &self,
+        step: &crate::tutorial::PlayStep,
+    ) -> Result<StepOutcome, Failure> {
+        self.drive_step(step, false, &mut || Wait::Continue)
+    }
+
+    fn drive_step(
+        &self,
+        step: &crate::tutorial::PlayStep,
+        submit: bool,
+        poll: &mut impl FnMut() -> Wait,
+    ) -> Result<StepOutcome, Failure> {
         let index = self.pane_index(&step.window)?;
         let log_from =
             fs::metadata(&self.panes[index].log_path).map(|meta| meta.len()).unwrap_or(0);
         let status_from = complete_lines(&self.read_status(index)).len();
         let start = format_utc(SystemTime::now());
-        self.type_command(index, &step.body)?;
-        self.wait_until(index, status_from + 1, &mut poll)?;
+        self.paste(index, &step.body, submit)?;
+        if !submit {
+            let target = self.shell_target(index);
+            self.tmux_ok(&["select-pane", "-t", &target])?;
+        }
+        self.wait_until(index, status_from + 1, poll)?;
         let end = format_utc(SystemTime::now());
         let status = self.latest_status(index)?;
         let output = self.capture_output(index, log_from)?;
-        Ok(StepOutcome { status, output, start, end })
+        let command = self.recorded_command(index)?;
+        Ok(StepOutcome { status, output, start, end, command })
+    }
+
+    /// The line written beside the status file, with one trailing newline.
+    ///
+    /// The hook writes it from a shell variable after the command, immediately
+    /// before the status line, so this is read only once that line is complete.
+    fn recorded_command(&self, index: usize) -> Result<String, Failure> {
+        let pane = &self.panes[index];
+        let path = command_path(&pane.status_path, &pane.name);
+        let mut text = fs::read_to_string(&path).map_err(|_| {
+            Failure::Report(format!(
+                "the {} shell in window {} reported no command\n",
+                self.shell_name, pane.name
+            ))
+        })?;
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        Ok(text)
     }
 
     fn wait_until(
@@ -954,6 +1011,10 @@ fn pane_target(name: &str) -> String {
     format!("play:={name}")
 }
 
+fn command_path(status_path: &Path, name: &str) -> PathBuf {
+    status_path.with_file_name(format!("command-{name}"))
+}
+
 fn remove_tree(path: &Path) {
     if fs::remove_dir_all(path).is_err() {
         thread::sleep(Duration::from_millis(50));
@@ -964,22 +1025,46 @@ fn remove_tree(path: &Path) {
 // No `-i`: that flag makes bash exit before the hook runs. The pane is a
 // terminal, so the shell is interactive without it. The environment file is
 // sourced before the prompt hook, so those assignments are not commands.
-// The hook appends the exit status before the prompt is drawn, which is why
-// the output wait follows the status line. zsh's `status` parameter is
-// read-only, so the hook stores the code under another name.
-// The visible prompt is the window's name. The marker is a terminal title:
-// the pane log records it and the screen does not show it. Echo stays on,
-// so the typed command is visible. The title is where the output is cut.
+// The accepted line is kept in a shell variable and written beside the status
+// file after the command, immediately before the status line: a file written
+// at accept time could be replaced by the command itself. A prompt redrawn
+// by Ctrl-C at the prompt writes no status, so cancelling an edit does not
+// look like a finished command. The first prompt is still the shell becoming
+// ready. zsh reads the editing buffer, because an empty Enter does not call
+// preexec. History expansion is off. The launcher points HISTFILE at
+// /dev/null before the shell starts, and the hook unsets it so nothing is
+// written. The visible prompt is the window's name. The marker is a terminal
+// title: the pane log records it and the screen does not show it. The title
+// is where the output is cut.
 const BASH_HOOK: &str = r#"
 if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
   set -a
   . "$TUTORIAL_STEPPER_ENV"
   set +a
 fi
-PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"; printf "\033]0;%s\007" "$TUTORIAL_STEPPER_PROMPT"'
+TUTORIAL_STEPPER_ACCEPTED=
+tutorial_stepper_accept_line() {
+  TUTORIAL_STEPPER_LINE=$READLINE_LINE
+  TUTORIAL_STEPPER_ACCEPTED=1
+}
+bind -x '"\C-x\C-a": tutorial_stepper_accept_line'
+bind '"\C-m": "\C-x\C-a\C-j"'
+tutorial_stepper_prompt() {
+  local status=$1
+  if [ -n "$TUTORIAL_STEPPER_ACCEPTED" ] || [ ! -s "$TUTORIAL_STEPPER_STATUS" ]; then
+    if [ -n "$TUTORIAL_STEPPER_ACCEPTED" ]; then
+      printf '%s' "$TUTORIAL_STEPPER_LINE" > "$TUTORIAL_STEPPER_COMMAND"
+      TUTORIAL_STEPPER_ACCEPTED=
+    fi
+    printf '%s\n' "$status" >> "$TUTORIAL_STEPPER_STATUS"
+  fi
+  printf '\033]0;%s\007' "$TUTORIAL_STEPPER_PROMPT"
+}
+PROMPT_COMMAND='tutorial_stepper_prompt $?'
 PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
 bind 'set enable-bracketed-paste on'
+set +o histexpand
 unset HISTFILE
 "#;
 
@@ -989,15 +1074,28 @@ if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
   . "$TUTORIAL_STEPPER_ENV"
   set +a
 fi
+TUTORIAL_STEPPER_ACCEPTED=
+tutorial_stepper_accept_line() {
+  TUTORIAL_STEPPER_LINE=$BUFFER
+  TUTORIAL_STEPPER_ACCEPTED=1
+  zle .accept-line
+}
+zle -N accept-line tutorial_stepper_accept_line
 precmd() {
   local exit_status=$?
-  print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
+  if [[ -n $TUTORIAL_STEPPER_ACCEPTED ]] || [[ ! -s $TUTORIAL_STEPPER_STATUS ]]; then
+    if [[ -n $TUTORIAL_STEPPER_ACCEPTED ]]; then
+      printf '%s' "$TUTORIAL_STEPPER_LINE" > "$TUTORIAL_STEPPER_COMMAND"
+      TUTORIAL_STEPPER_ACCEPTED=
+    fi
+    print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
+  fi
   print -n -- $'\e]0;'"$TUTORIAL_STEPPER_PROMPT"$'\a'
 }
 PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
 unset RPS1
-unsetopt prompt_cr prompt_sp
+unsetopt prompt_cr prompt_sp banghist
 unset HISTFILE
 setopt no_beep
 zle_highlight=(none)
