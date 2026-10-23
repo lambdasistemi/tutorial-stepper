@@ -12,11 +12,11 @@
 
 Test first. A detached tmux session and the face are the subject. `--auto` stays green.
 
-- [ ] A failing test that `f` leaves each command with its window and drops the explanation, the shown block, and the ordinary code block, and that `f` again brings the explanation back.
-- [ ] A failing test that Enter, `e`, `s` and `b` do the same thing while the page is folded, and the page stays folded.
-- [ ] A failing test that the choice holds on the next page and after quitting and playing again.
-- [ ] The smallest change that makes those tests pass. `f` toggles a flag saved with the position. The stepping keys are untouched.
-- [ ] `docs/terminal.md` describes `f`, the folded page, and the choice in the run folder, in the same commit as that behaviour. The README names `f` where it already tells the learner the explanations fold away. `play --help` names `f` and stays within the line limit.
+- [x] A failing test that `f` leaves each command with its window and drops the explanation, the shown block, and the ordinary code block, and that `f` again brings the explanation back.
+- [x] A failing test that Enter, `e`, `s` and `b` do the same thing while the page is folded, and the page stays folded.
+- [x] A failing test that the choice holds on the next page and after quitting and playing again.
+- [x] The smallest change that makes those tests pass. `f` toggles a flag saved with the position. The stepping keys are untouched.
+- [x] `docs/terminal.md` describes `f`, the folded page, and the choice in the run folder, in the same commit as that behaviour. The README names `f` where it already tells the learner the explanations fold away. `play --help` names `f` and stays within the line limit.
 
 ## Phase 3: Verification
 

@@ -817,3 +817,225 @@ fn the_default_run_folder_is_named_after_the_tutorial_under_home() {
     assert!(run.join(".tutorial-stepper/session.toml").is_file());
     assert!(run.join(".tutorial-stepper/position.toml").is_file());
 }
+
+fn explanations_tutorial() -> (TutorialGuard, PathBuf) {
+    let parent = std::env::temp_dir().join(format!(
+        "tutorial-stepper-face-src-{}-{}",
+        std::process::id(),
+        unique()
+    ));
+    let dir = parent.join("fold");
+    fs::create_dir_all(&dir).expect("the tutorial directory is created");
+    fs::write(
+        dir.join("tutorial.toml"),
+        "\
+pages = [\"welcome.md\", \"later.md\"]
+
+[[window]]
+name = \"alice\"
+folder = \"alice\"
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+",
+    )
+    .expect("the index is written");
+    fs::write(
+        dir.join("welcome.md"),
+        "\
+# Explanation heading
+
+This explanation folds away.
+
+```bash { window=alice }
+echo fold-first
+```
+
+```text { mode=show }
+shown-not-a-command
+```
+
+```
+echo ordinary-block
+```
+
+```bash { }
+echo fold-inherited
+```
+
+```bash { window=bob }
+echo fold-second
+```
+",
+    )
+    .expect("the first page is written");
+    fs::write(
+        dir.join("later.md"),
+        "\
+# Later heading
+
+Later explanation.
+
+```bash { window=bob }
+echo fold-third
+```
+",
+    )
+    .expect("the second page is written");
+    (TutorialGuard(parent), dir)
+}
+
+fn explanations_are_hidden(page: &str) -> bool {
+    !page.contains("Explanation heading")
+        && !page.contains("This explanation folds away")
+        && !page.contains("shown-not-a-command")
+        && !page.contains("ordinary-block")
+}
+
+fn wait_folded(face: &Face) -> String {
+    face.wait_until(Duration::from_secs(15), "the folded page", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        (text.contains("f unfolds") && explanations_are_hidden(&text)).then_some(text)
+    })
+}
+
+#[test]
+fn f_hides_the_explanations_and_shows_each_command_with_its_window() {
+    let (_keep, tutorial) = explanations_tutorial();
+    let face = Face::launch(tutorial, true);
+    let full = face.wait_page("Explanation heading");
+    assert!(full.contains("This explanation folds away"), "{full}");
+    assert!(full.contains("shown-not-a-command"), "{full}");
+    assert!(full.contains("ordinary-block"), "{full}");
+    assert!(full.contains("fold-first"), "{full}");
+    face.send(&["f"]);
+    let folded = wait_folded(&face);
+    assert!(folded.contains("alice"), "{folded}");
+    assert!(folded.contains("fold-first"), "{folded}");
+    assert!(folded.contains("fold-inherited"), "{folded}");
+    assert!(folded.contains("bob"), "{folded}");
+    assert!(folded.contains("fold-second"), "{folded}");
+    assert!(folded.contains("next"), "{folded}");
+    assert!(face.position().contains("folded = true"), "{}", face.position());
+    assert_eq!(face.window_of_page(), "alice");
+    face.send(&["f"]);
+    let back = face.wait_page("Explanation heading");
+    assert!(back.contains("This explanation folds away"), "{back}");
+    assert!(back.contains("shown-not-a-command"), "{back}");
+    assert!(back.contains("ordinary-block"), "{back}");
+    assert!(back.contains("f folds"), "{back}");
+    assert!(face.position().contains("folded = false"), "{}", face.position());
+}
+
+#[test]
+fn folded_stepping_runs_skips_goes_back_and_unfolds() {
+    let (_keep, tutorial) = explanations_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Explanation heading");
+    face.send(&["f"]);
+    wait_folded(&face);
+    let before = face.position();
+    face.send(&["e"]);
+    face.wait_until(Duration::from_secs(15), "the unrun command at the prompt", |face| {
+        let screen = face.shell_screen("alice")?;
+        let pasted = screen.contains("echo fold-first");
+        let ran = screen.lines().any(|line| line.trim() == "fold-first");
+        (pasted && !ran).then_some(())
+    });
+    assert_eq!(face.position(), before, "e moved the next command");
+    let editing = face.wait_page("editing in alice");
+    assert!(explanations_are_hidden(&editing), "{editing}");
+    face.send_shell("alice", &["Enter"]);
+    let after_run = face.wait_until(Duration::from_secs(15), "the inherited command", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        (face.position().contains("line = 17\n")
+            && text.contains("f unfolds")
+            && text.contains("fold-inherited")
+            && explanations_are_hidden(&text))
+        .then_some(text)
+    });
+    assert!(face.log("alice").contains("fold-first"), "{}", face.log("alice"));
+    assert!(after_run.contains("alice"), "{after_run}");
+    face.send(&["s"]);
+    let skipped = face.wait_until(Duration::from_secs(10), "the second window's command", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        (face.position().contains("line = 21\n")
+            && text.contains("f unfolds")
+            && text.contains("fold-second")
+            && face.window_of_page() == "bob")
+            .then_some(text)
+    });
+    assert!(!face.log("alice").contains("fold-inherited"), "{}", face.log("alice"));
+    assert!(skipped.contains("bob"), "{skipped}");
+    face.send(&["b"]);
+    face.wait_until(Duration::from_secs(10), "the page to move back", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        (face.position().contains("line = 17\n")
+            && text.contains("f unfolds")
+            && text.contains("fold-inherited")
+            && explanations_are_hidden(&text)
+            && face.window_of_page() == "alice")
+            .then_some(())
+    });
+    face.send(&["f"]);
+    let back = face.wait_page("Explanation heading");
+    assert!(back.contains("fold-inherited"), "{back}");
+    assert!(face.position().contains("folded = false"), "{}", face.position());
+}
+
+#[test]
+fn the_fold_holds_across_pages_and_across_quitting() {
+    let (_keep, tutorial) = explanations_tutorial();
+    let face = Face::launch(tutorial, true);
+    face.wait_page("Explanation heading");
+    face.send(&["f"]);
+    wait_folded(&face);
+    face.send(&["n"]);
+    let later = face.wait_until(Duration::from_secs(15), "the next page folded", |face| {
+        let socket = face.socket()?;
+        let page_id = face.page_id()?;
+        let text = face.capture(&socket, &page_id)?;
+        (text.contains("f unfolds")
+            && text.contains("fold-third")
+            && !text.contains("Later heading")
+            && !text.contains("Later explanation"))
+        .then_some(text)
+    });
+    assert!(later.contains("bob"), "{later}");
+    let saved = face.position();
+    assert!(saved.contains("view = \"later.md\""), "{saved}");
+    assert!(saved.contains("welcome.md"), "{saved}");
+    assert!(saved.contains("folded = true"), "{saved}");
+    assert!(saved.contains("line = 5\n"), "{saved}");
+    face.send(&["q"]);
+    let page = face.page_id().expect("the page was recorded");
+    face.wait_until(Duration::from_secs(10), "the page to close", |face| {
+        (!face.pane_open(&page) && face.server_up()).then_some(())
+    });
+    face.attach_again();
+    let resumed =
+        face.wait_until(Duration::from_secs(20), "the folded page after resume", |face| {
+            let socket = face.socket()?;
+            let page_id = face.page_id()?;
+            let text = face.capture(&socket, &page_id)?;
+            (text.contains("f unfolds")
+                && text.contains("fold-third")
+                && !text.contains("Later heading"))
+            .then_some(text)
+        });
+    assert!(resumed.contains("bob"), "{resumed}");
+    assert!(!face.log("alice").contains("fold-first"), "resume ran the command");
+    face.send(&["f"]);
+    let full = face.wait_page("Later heading");
+    assert!(full.contains("Later explanation"), "{full}");
+    assert!(face.position().contains("folded = false"), "{}", face.position());
+}

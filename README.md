@@ -12,7 +12,8 @@ where the command runs; Enter runs the next command there, `e` places it at the 
 When a command ends with a status the page did not expect, the page says so. Commands that only look
 at what happened, such as a wallet's balance or the chain's view of a transaction, stay on a list the
 learner can run from at any time without losing their place. Once the explanations are understood,
-they fold away and only the commands remain to step through.
+they press `f` and only the commands remain, each with its window. `f` again brings the
+explanations back.
 
 **A tutorial author** writes plain Markdown, with the commands in ordinary code blocks, declares the
 settings and which combinations of them are tested, and gets three things from one source: the

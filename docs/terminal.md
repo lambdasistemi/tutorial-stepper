@@ -1,6 +1,6 @@
 # Playing a tutorial in the terminal
 
-A learner runs `tutorial-stepper play` on a tutorial directory. The stepper starts its own tmux server, one shell per window the index declares, and attaches the learner's terminal to it. The page sits beside the window of the next command. Enter runs that command. `q` closes the page and leaves the windows running, and a later `play` of the same tutorial comes back to the same place.
+A learner runs `tutorial-stepper play` on a tutorial directory. The stepper starts its own tmux server, one shell per window the index declares, and attaches the learner's terminal to it. The page sits beside the window of the next command. Enter runs that command. `f` folds the explanations away, and `f` again brings them back. `q` closes the page and leaves the windows running, and a later `play` of the same tutorial comes back to the same place, explanations folded or not as the learner left them.
 
 ## Who it is for
 
@@ -12,7 +12,7 @@ flowchart TD
   folder["Run folder: the place and the server name"]
   server["tmux server and one shell per window"]
   page["Page beside the next command's window"]
-  key["Enter, e, s, c, b, n, p, or q"]
+  key["Enter, e, f, s, c, b, n, p, or q"]
   stepper["The same stepper as the unattended run"]
   stay["q closes the page and keeps the windows"]
   directory --> folder
@@ -37,6 +37,17 @@ The page is the tutorial's Markdown, wrapped to the pane's width: headings, bold
 
 Enter runs the marked command in its window. The window's prompt is the window's name followed by `$`, and the window shows the command and then its output. The command's end is noticed by the same stepper the unattended run uses. `s` skips the command and does not run it. `c`, while a command is running, sends Ctrl-C to that shell once; the stepper still waits until the shell's prompt says the command ended. `b` marks the previous command and leaves whatever that command already did. `n` and `p` turn the viewed page forward and back. They do not change which command Enter runs. Enter, `s` and `b` then show the page that holds the next command. `q` closes the page and keeps the windows.
 
+`f` folds the explanations away. The page then shows only the commands and the observations on the viewed page, and each one is named with the window it runs in. A heading, a paragraph, a list, a block marked `mode=show`, and a code block that is not a command are left out. The next command stays marked. `f` again brings the explanations back. Enter, `e`, `s`, `c`, `b`, `n` and `p` do the same thing in both views, and the page stays folded until the learner unfolds it.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Full
+  Full --> Folded: f
+  Folded --> Full: f
+  Folded --> Folded: Enter, e, s, c, b, n, p
+  Full --> Full: Enter, e, s, c, b, n, p
+```
+
 `e` places the marked block at that window's prompt and does not run it. Several lines arrive as one paste, and they stay there until the learner presses Enter in the window. The learner can change the line first. The page then shows `The shell ran:` followed by the line that ran. Ctrl-C at the prompt does not run the line and does not move the page; Enter does, even when the line has been cleared.
 
 A block marked `mode=show` is shown and is not a command. A fence with no braces is an ordinary code block and is not run. An observation runs where it appears, when the learner reaches it. The face does not run observations again at the end.
@@ -47,11 +58,11 @@ After the last block, the page says the tutorial is done and the windows stay. `
 
 ## The run folder
 
-The folder is `$HOME/<name>-run`, where `<name>` is the tutorial directory's name, unless `--run DIR` names another. It holds the window directories, the position, and the tmux server's name. The position is the page and the line of the next command, not a count of commands. The viewed page is remembered too, and turning pages does not change the next command.
+The folder is `$HOME/<name>-run`, where `<name>` is the tutorial directory's name, unless `--run DIR` names another. It holds the window directories, the position, and the tmux server's name. The position is the page and the line of the next command, not a count of commands. The viewed page is remembered too, and turning pages does not change the next command. The same record says whether the explanations are folded. That choice is one for the whole run: turning the page keeps it, and a later `play` restores it.
 
 A missing directory is created. An empty directory is used. A path that is a file is refused: the message says it is not a directory. A directory that already holds something, and is not this tutorial's run, is refused with the message that it is not empty, and nothing in it is changed. When `HOME` is missing or empty and `--run` was not given, the command exits 2 and says `the home directory is not set; pass --run DIR`. No server starts.
 
-`q` writes the position and closes the page. The server keeps running. A second `play` of the same tutorial attaches to that server and marks the same command. When the server is already gone, a new one starts in the same folder, with new shells, and the saved position is kept. The new shells do not resume the old shells' state. Files the commands wrote stay on disk.
+`q` writes the position, including the folded choice, and closes the page. The server keeps running. A second `play` of the same tutorial attaches to that server and marks the same command, folded or unfolded as it was. When the server is already gone, a new one starts in the same folder, with new shells, and the saved position is kept. The new shells do not resume the old shells' state. Files the commands wrote stay on disk.
 
 When the saved command is no longer in the tutorial, the page says `The saved command is no longer in the tutorial. Starting at the beginning.` and starts there.
 
