@@ -45,7 +45,13 @@
           tutorial-stepper = packages.tutorial-stepper;
         };
 
-        docs = import ./nix/docs.nix { inherit pkgs; };
+        docs = import ./nix/docs.nix {
+          inherit pkgs;
+          rustdoc = craneEnv.craneLib.cargoDoc (craneEnv.commonArgs // {
+            cargoArtifacts = craneEnv.cargoArtifacts;
+            env.RUSTDOCFLAGS = "--deny warnings";
+          });
+        };
       in
       {
         packages = {

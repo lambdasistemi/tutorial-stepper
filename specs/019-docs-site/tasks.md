@@ -40,8 +40,8 @@ Test first. The subject is `tools/check_presentation.py` on `docs/`.
 
 Test first. The subject is the built site's `api/` directory and the workflow file.
 
-- [ ] A failing check that `api/tutorial_stepper/index.html` is in the built site and that the library page embeds it, and that the workflow deploys from `main` with `actions/upload-pages-artifact` and `actions/deploy-pages`.
-- [ ] The smallest change that makes that check pass: rustdoc copied into the site, `docs/library.md`, and the deploy job.
+- [x] A failing check that `api/tutorial_stepper/index.html` is in the built site and that the library page embeds it, and that the workflow deploys from `main` with `actions/upload-pages-artifact` and `actions/deploy-pages`.
+- [x] The smallest change that makes that check pass: rustdoc copied into the site, `docs/library.md`, and the deploy job.
 
 ## Phase 7: Verification
 

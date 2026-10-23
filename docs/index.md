@@ -30,18 +30,19 @@ The author writes an index file and one Markdown file per page. The stepper read
 flowchart TD
   tutorial["Tutorial files"]
   stepper["Stepper"]
-  shells["Shells in tmux"]
-  face["Terminal page"]
-  unattended["Unattended run"]
   scenario["Killercoda scenario"]
   printed["Printed script"]
   tutorial -->|"read by"| stepper
-  stepper -->|"types into"| shells
-  shells -->|"reports the status"| stepper
-  stepper -->|"drives"| face
-  stepper -->|"drives"| unattended
   tutorial -->|"rendered to"| scenario
   tutorial -->|"printed as"| printed
+  subgraph driven ["Driven by the stepper"]
+    direction LR
+    face["Terminal page"]
+    unattended["Unattended run"]
+  end
+  stepper -->|"drives"| driven
+  shells["Shells in tmux"]
+  stepper -->|"types into"| shells
 ```
 
 ## Install
@@ -65,4 +66,4 @@ Intel Macs are not built. The binary is not signed with an Apple Developer ID, a
 
 ## Where to go next
 
-Read the [format](format.md), then the [commands](commands.md). The [author's guide](author.md) takes a plain Markdown page to a tutorial that plays unattended. A learner's session is [the terminal page](terminal.md). The unattended run is [played from the command line](play.md), and the same source [prints as one script](script.md).
+Read the [format](format.md), then the [commands](commands.md). The [author's guide](author.md) takes a plain Markdown page to a tutorial that plays unattended. A learner's session is [the terminal page](terminal.md). The unattended run is [played from the command line](play.md), and the same source [prints as one script](script.md). The generated [library reference](library.md) is the public Rust API of this revision.

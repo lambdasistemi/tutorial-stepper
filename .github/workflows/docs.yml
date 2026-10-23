@@ -29,3 +29,36 @@ jobs:
       - name: Build the site strictly and check the pages
         working-directory: checkout
         run: nix build --quiet .#checks.x86_64-linux.documentation .#documentation-site
+
+  deploy:
+    name: Deploy documentation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: site
+    runs-on: nixos
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Copy the built site out of the store
+        working-directory: checkout
+        run: |
+          set -euo pipefail
+          nix build --quiet .#documentation-site -o result-site
+          rm -rf site
+          mkdir site
+          cp -R -L result-site/* site/
+          chmod -R u+w site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: checkout/site
+      - uses: actions/deploy-pages@v5

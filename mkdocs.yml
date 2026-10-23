@@ -21,6 +21,8 @@ nav:
       - The terminal: terminal.md
       - Playing unattended: play.md
       - A printed script: script.md
+  - Read the source:
+      - Library reference: library.md
 plugins:
   - search
 markdown_extensions:

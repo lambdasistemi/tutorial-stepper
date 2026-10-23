@@ -114,11 +114,12 @@ def fences_in(docs):
 
 
 def main(argv):
-    if len(argv) != 2:
-        print("usage: check_site.py SITE DOCS", file=sys.stderr)
+    if len(argv) != 3:
+        print("usage: check_site.py SITE DOCS WORKFLOW", file=sys.stderr)
         return 2
     site = Path(argv[0])
     docs = Path(argv[1])
+    workflow = Path(argv[2])
     failures = prove_the_parser_rejects_a_bad_spelling()
     index = site / "index.html"
     if not index.is_file():
@@ -153,6 +154,32 @@ def main(argv):
         failures.extend(fences_in(docs))
     else:
         failures.append(f"missing {docs}")
+    library = page(site, "library")
+    if not library.is_file():
+        failures.append(f"missing {library}")
+    else:
+        body = library.read_text(encoding="utf-8", errors="replace")
+        require_text(body, "<iframe", failures, "the library page does not embed the reference")
+        require_text(
+            body,
+            "api/tutorial_stepper/index.html",
+            failures,
+            "the library page does not point at the generated reference",
+        )
+    rustdoc = site / "api" / "tutorial_stepper" / "index.html"
+    if not rustdoc.is_file():
+        failures.append(f"missing {rustdoc}")
+    else:
+        reference = rustdoc.read_text(encoding="utf-8", errors="replace")
+        require_text(reference, "fn.run.html", failures, "the generated reference does not describe run")
+        require_text(reference, "fence/index.html", failures, "the generated reference does not describe fence attributes")
+    if not workflow.is_file():
+        failures.append(f"missing {workflow}")
+    else:
+        text = workflow.read_text(encoding="utf-8")
+        require_text(text, "actions/upload-pages-artifact@", failures, "the workflow does not upload the site")
+        require_text(text, "actions/deploy-pages@", failures, "the workflow does not deploy the site")
+        require_text(text, "refs/heads/main", failures, "the workflow does not deploy from main")
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)

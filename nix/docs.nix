@@ -1,7 +1,7 @@
 # The documentation site and the check that reads it. The crate's
 # source filter does not include these pages, so a docs edit does not
 # rebuild the binary.
-{ pkgs }:
+{ pkgs, rustdoc }:
 let
   root = toString ../.;
   docsSrc = pkgs.lib.cleanSourceWith {
@@ -55,6 +55,8 @@ let
       chmod -R u+w site-src
       cd site-src
       mkdocs build --strict --site-dir "$out"
+      mkdir -p "$out/api"
+      cp -R ${rustdoc}/share/doc/. "$out/api/"
     '';
 
   check = pkgs.runCommand "tutorial-stepper-documentation"
@@ -65,7 +67,8 @@ let
     }
     ''
       set -euo pipefail
-      python3 ${docsSrc}/tools/check_site.py ${site} ${docsSrc}/docs
+      python3 ${docsSrc}/tools/check_site.py ${site} ${docsSrc}/docs \
+        ${../.github/workflows/docs.yml}
       python3 ${docsSrc}/tools/check_presentation.py --no-speech \
         --front ${docsSrc}/docs/index.md ${docsSrc}/docs
       work=$(mktemp -d)
