@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.3.1...v0.4.0) (2026-10-23)
+
+
+### Features
+
+* a window's folder may be the run folder itself ([da4327d](https://github.com/lambdasistemi/tutorial-stepper/commit/da4327d6076f05d7e416328f5c77cad63f9d63b0))
+* a window's folder may be the run folder itself ([0c44fd3](https://github.com/lambdasistemi/tutorial-stepper/commit/0c44fd3cd779ab3cee5c8b497554cf3e6b6c79ae))
+
 ## [0.3.1](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.3.0...v0.3.1) (2026-10-23)
 
 
