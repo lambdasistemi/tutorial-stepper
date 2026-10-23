@@ -131,11 +131,4 @@ else
   rm -rf "$stage/libexec"
 fi
 
-mkdir -p "$dest"
-archive=$dest/tutorial-stepper-${version}-aarch64-darwin.tar.gz
-if [[ -d $stage/libexec ]]; then
-  COPYFILE_DISABLE=1 tar -czf "$archive" -C "$stage" bin libexec
-else
-  COPYFILE_DISABLE=1 tar -czf "$archive" -C "$stage" bin
-fi
-printf '%s\n' "$archive"
+bash "$(dirname "$0")/pack-homebrew-tarball.sh" "$stage" "$version" "$dest"

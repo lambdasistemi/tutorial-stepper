@@ -26,7 +26,7 @@ A learner with an Apple Silicon Mac does not have Nix. They run `brew install la
 ### Edge Cases
 
 - Intel Macs are not built. The binary is not signed with an Apple Developer ID and is not notarised.
-- The tarball holds `bin/tutorial-stepper`. Libraries that are not part of macOS, if the link recorded any, sit in `libexec/lib` and the binary loads them from there. A library path inside the Nix store is a failed build.
+- The tarball has one top-level directory. Homebrew enters that directory before install. Inside it, `bin/tutorial-stepper` is the binary. Libraries that are not part of macOS, if the link recorded any, sit in `libexec/lib` and the binary loads them from there. A library path inside the Nix store is a failed build.
 - The formula depends on tmux and does not depend on bash. Playing a bash tutorial needs bash 4 or newer, because the prompt hook uses bash 4. The bash macOS ships is older than that. zsh is the shell macOS already provides. The macOS continuous-integration job installs a current bash before it plays the bash example.
 - The version in the file name is the version in the crate manifest, the same version `--version` prints. release-please bumps that manifest. The manifest is not edited by hand here.
 - The Linux release derivation still holds only the two Linux binaries and their checksum file. The checksum file a learner downloads from the release is rewritten, after the Apple Silicon tarball is uploaded, so that it lists all three files.

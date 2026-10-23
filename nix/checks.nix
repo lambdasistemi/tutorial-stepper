@@ -109,6 +109,8 @@ in
         pkgs.bash
         pkgs.coreutils
         pkgs.gnugrep
+        pkgs.gnutar
+        pkgs.gzip
         pkgs.glibcLocales
       ];
       LANG = "C.UTF-8";
@@ -118,9 +120,13 @@ in
       set -euo pipefail
       mkdir -p scripts packaging/homebrew
       cp ${../scripts/render-homebrew-formula.sh} scripts/render-homebrew-formula.sh
+      cp ${../scripts/pack-homebrew-tarball.sh} scripts/pack-homebrew-tarball.sh
+      cp ${../scripts/check-homebrew-archive.sh} scripts/check-homebrew-archive.sh
       cp ${../packaging/homebrew/tutorial-stepper.rb.in} \
         packaging/homebrew/tutorial-stepper.rb.in
-      chmod +x scripts/render-homebrew-formula.sh
+      chmod +x scripts/render-homebrew-formula.sh \
+        scripts/pack-homebrew-tarball.sh \
+        scripts/check-homebrew-archive.sh
       sha=abababababababababababababababababababababababababababababababab
       formula=$(bash scripts/render-homebrew-formula.sh 1.2.3 "$sha")
       printf '%s\n' "$formula" > formula.rb
@@ -152,6 +158,29 @@ in
         printf 'a short checksum was accepted\n' >&2
         exit 1
       fi
+
+      # Homebrew enters one top-level directory, then runs install.
+      # The binary-only archive is the case the macOS job builds.
+      stage=$(mktemp -d)
+      mkdir -p "$stage/bin"
+      printf 'binary\n' > "$stage/bin/tutorial-stepper"
+      chmod 755 "$stage/bin/tutorial-stepper"
+      archive_dir=$(mktemp -d)
+      bash scripts/pack-homebrew-tarball.sh "$stage" 1.2.3 "$archive_dir" \
+        >/dev/null
+      bash scripts/check-homebrew-archive.sh \
+        "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        formula.rb
+      mkdir -p "$stage/libexec/lib"
+      printf 'lib\n' > "$stage/libexec/lib/libfoo.dylib"
+      chmod 755 "$stage/libexec/lib/libfoo.dylib"
+      bash scripts/pack-homebrew-tarball.sh "$stage" 1.2.3 "$archive_dir" \
+        >/dev/null
+      tar -tzf "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        | grep -F 'libexec/lib/libfoo.dylib' >/dev/null
+      bash scripts/check-homebrew-archive.sh \
+        "$archive_dir/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz" \
+        formula.rb
       touch "$out"
     '';
 
