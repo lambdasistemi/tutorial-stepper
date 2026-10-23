@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.2.0...v0.3.0) (2026-10-23)
+
+
+### Features
+
+* build the macOS formula in CI and publish it on release ([c3754b5](https://github.com/lambdasistemi/tutorial-stepper/commit/c3754b566f46ef527f21bf7d6035476f735cd722))
+* checksum the Apple Silicon tarball and play both shells ([6ecc177](https://github.com/lambdasistemi/tutorial-stepper/commit/6ecc177c4355104e492527c4cb2ceb86a87bce73))
+* choose settings before the first page ([b23c99d](https://github.com/lambdasistemi/tutorial-stepper/commit/b23c99df192a76f13c875df43cae8d596ad718b6))
+* choose settings before the first page ([5a27e09](https://github.com/lambdasistemi/tutorial-stepper/commit/5a27e097e9d0730628aa57d330e697e016b104c9))
+* fold the explanations away ([9664867](https://github.com/lambdasistemi/tutorial-stepper/commit/9664867299e504c3cd559a0d33e8ee2fadcc5ca2))
+* fold the explanations away ([8cad255](https://github.com/lambdasistemi/tutorial-stepper/commit/8cad255dcf9431c35978c85fc95f34f886ba0ead))
+* macOS binary and Homebrew formula ([b036e50](https://github.com/lambdasistemi/tutorial-stepper/commit/b036e5068efb0c7b995d8b186a20894d672643c5))
+* push a command to the prompt before it runs ([15d119c](https://github.com/lambdasistemi/tutorial-stepper/commit/15d119c087f30b03068ef045a417a1b481953ef9))
+* push a command to the prompt before it runs ([835c5c9](https://github.com/lambdasistemi/tutorial-stepper/commit/835c5c92d3507dcdd54fafa6da61e7df711b6d64))
+* render the Homebrew formula from a version and a checksum ([7d9b6b8](https://github.com/lambdasistemi/tutorial-stepper/commit/7d9b6b873cdbeecbdc4eee03d00788c836fba58f))
+* run an observation at any time ([9ba1fb3](https://github.com/lambdasistemi/tutorial-stepper/commit/9ba1fb3581a1cf86bf3d647c6df5fb631e66fe8c))
+* run an observation at any time ([d3152ca](https://github.com/lambdasistemi/tutorial-stepper/commit/d3152cabcf5ccba908a98c0efc574121aa749845))
+* ship static Linux binaries for x86_64 and arm64 ([e451986](https://github.com/lambdasistemi/tutorial-stepper/commit/e451986c23ea73413edd1352d61c28c6ff72e572))
+* ship static Linux binaries for x86_64 and arm64 ([fbf7145](https://github.com/lambdasistemi/tutorial-stepper/commit/fbf71457861bba9eb12f3be09fc9e03411531f10))
+
+
+### Bug Fixes
+
+* keep a shell off the new settings choice ([7999d5a](https://github.com/lambdasistemi/tutorial-stepper/commit/7999d5adcb24c9e354b96edc74a09c8710b3386c))
+* put the Homebrew binary where the formula installs it ([44db25c](https://github.com/lambdasistemi/tutorial-stepper/commit/44db25cd0ffb109c077b49dd08b73e4aa5d2fb87))
+* retry running a test program that is still busy ([89b2e93](https://github.com/lambdasistemi/tutorial-stepper/commit/89b2e93c38d98a380c8c6cefa732b723afad7c11)), closes [#39](https://github.com/lambdasistemi/tutorial-stepper/issues/39)
+
 ## [0.2.0](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 
