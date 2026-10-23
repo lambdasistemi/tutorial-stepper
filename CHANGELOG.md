@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.4.0...v0.4.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* prefer the signal's exit when the pane dies with it (issue 47) ([237c38d](https://github.com/lambdasistemi/tutorial-stepper/commit/237c38d3d864b87e4cb0e13e353c90db55f18376))
+* refuse a shell without readline and kill the server on signals (issue 47) ([e342fa0](https://github.com/lambdasistemi/tutorial-stepper/commit/e342fa060935859ab2fecb2d1602741b98d779db))
+* refuse a shell without readline and remove the server on signals ([94cd8f1](https://github.com/lambdasistemi/tutorial-stepper/commit/94cd8f18129a8c6ab8c5f464b142a72d70fc5aea))
+
 ## [0.4.0](https://github.com/lambdasistemi/tutorial-stepper/compare/v0.3.1...v0.4.0) (2026-10-23)
 
 
