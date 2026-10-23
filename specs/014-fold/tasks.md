@@ -20,9 +20,9 @@ Test first. A detached tmux session and the face are the subject. `--auto` stays
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a page with an explanation and commands in two windows, driven with `tmux send-keys`. The capture shows the fold, a step, and the explanations back.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a page with an explanation and commands in two windows, driven with `tmux send-keys`. The capture shows the fold, a step, and the explanations back.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
