@@ -1,0 +1,22 @@
+class TutorialStepper < Formula
+  desc "Step a Markdown tutorial's commands into real shells"
+  homepage "https://github.com/lambdasistemi/tutorial-stepper"
+  url "@URL@"
+  sha256 "@SHA256@"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  depends_on "tmux"
+
+  def install
+    bin.install "bin/tutorial-stepper"
+    return unless Dir.exist?("libexec/lib")
+
+    (libexec/"lib").install Dir["libexec/lib/*"]
+  end
+
+  test do
+    assert_match "tutorial-stepper #{version}",
+                 shell_output("#{bin}/tutorial-stepper --version")
+  end
+end

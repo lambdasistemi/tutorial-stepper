@@ -99,4 +99,59 @@ in
       cmp "$work/found" "$work/expected"
       touch "$out"
     '';
+
+  # The formula a release pushes. Fails while the renderer still prints
+  # the template's placeholders.
+  homebrew-formula = pkgs.runCommand "tutorial-stepper-homebrew-formula"
+    {
+      nativeBuildInputs = [
+        pkgs.ruby
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.gnugrep
+        pkgs.glibcLocales
+      ];
+      LANG = "C.UTF-8";
+      LC_ALL = "C.UTF-8";
+    }
+    ''
+      set -euo pipefail
+      mkdir -p scripts packaging/homebrew
+      cp ${../scripts/render-homebrew-formula.sh} scripts/render-homebrew-formula.sh
+      cp ${../packaging/homebrew/tutorial-stepper.rb.in} \
+        packaging/homebrew/tutorial-stepper.rb.in
+      chmod +x scripts/render-homebrew-formula.sh
+      sha=abababababababababababababababababababababababababababababababab
+      formula=$(bash scripts/render-homebrew-formula.sh 1.2.3 "$sha")
+      printf '%s\n' "$formula" > formula.rb
+      if ! printf '%s\n' "$formula" | grep -F "sha256 \"$sha\""; then
+        printf 'rendered formula does not carry the checksum\n' >&2
+        printf '%s\n' "$formula" >&2
+        exit 1
+      fi
+      printf '%s\n' "$formula" | grep -F 'depends_on "tmux"' >/dev/null
+      printf '%s\n' "$formula" | grep -F \
+        'tutorial-stepper-1.2.3-aarch64-darwin.tar.gz' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'version "1.2.3"' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'class TutorialStepper' >/dev/null
+      printf '%s\n' "$formula" | grep -F 'bin.install "bin/tutorial-stepper"' \
+        >/dev/null
+      if printf '%s\n' "$formula" | grep -F '@'; then
+        printf 'placeholder left in the formula\n' >&2
+        exit 1
+      fi
+      ruby -c formula.rb
+      local_url='file:///tmp/fresh/tutorial-stepper-1.2.3-aarch64-darwin.tar.gz'
+      local_formula=$(bash scripts/render-homebrew-formula.sh 1.2.3 "$sha" "$local_url")
+      printf '%s\n' "$local_formula" | grep -F "url \"$local_url\"" >/dev/null
+      if bash scripts/render-homebrew-formula.sh 1.2 "$sha"; then
+        printf 'a short version was accepted\n' >&2
+        exit 1
+      fi
+      if bash scripts/render-homebrew-formula.sh 1.2.3 xyz; then
+        printf 'a short checksum was accepted\n' >&2
+        exit 1
+      fi
+      touch "$out"
+    '';
 }

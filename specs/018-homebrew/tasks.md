@@ -12,8 +12,8 @@
 
 Test first. The subject is the rendered formula.
 
-- [ ] A failing check that a version and a checksum produce a formula which depends on tmux, names `tutorial-stepper-<version>-aarch64-darwin.tar.gz`, and carries that checksum. A version or a checksum of the wrong shape is refused. `ruby -c` accepts the file.
-- [ ] The smallest change that makes that check pass: the template and the renderer.
+- [x] A failing check that a version and a checksum produce a formula which depends on tmux, names `tutorial-stepper-<version>-aarch64-darwin.tar.gz`, and carries that checksum. A version or a checksum of the wrong shape is refused. `ruby -c` accepts the file.
+- [x] The smallest change that makes that check pass: the template and the renderer.
 
 ## Phase 3: The release checksum
 
