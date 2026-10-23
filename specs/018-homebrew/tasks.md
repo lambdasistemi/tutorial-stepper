@@ -19,8 +19,8 @@ Test first. The subject is the rendered formula.
 
 Test first. The subject is `SHA256SUMS` for a directory that holds the two Linux binaries and the Apple Silicon tarball.
 
-- [ ] A failing check that the directory's `SHA256SUMS` lists all three names, that `sha256sum -c` succeeds, and that a directory missing the tarball is refused.
-- [ ] The smallest change that makes that check pass.
+- [x] A failing check that the directory's `SHA256SUMS` lists all three names, that `sha256sum -c` succeeds, and that a directory missing the tarball is refused.
+- [x] The smallest change that makes that check pass.
 
 ## Phase 4: Both shells
 
