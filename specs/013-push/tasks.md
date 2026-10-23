@@ -19,9 +19,9 @@ Test first. A detached tmux session and the face are the subject. `--auto` stays
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a tutorial with a command of several lines, driven with `tmux send-keys`. The capture shows the paste waiting, the edit, and the recorded line.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a tutorial with a command of several lines, driven with `tmux send-keys`. The capture shows the paste waiting, the edit, and the recorded line.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
