@@ -57,23 +57,48 @@ struct Entry {
 
 struct Pane {
     name: String,
+    /// tmux pane id of the shell. Empty until the window exists.
+    id: String,
     dir: PathBuf,
     status_path: PathBuf,
     log_path: PathBuf,
     launcher_path: PathBuf,
 }
 
-struct Session {
+/// One private tmux server and the shells it is stepping.
+pub(crate) struct Session {
     tmux: PathBuf,
     socket: String,
     run_dir: PathBuf,
     keep_run: bool,
+    /// When set, dropping the session leaves the server and its control files.
+    retain: bool,
     control_dir: PathBuf,
     panes: Vec<Pane>,
     marker: String,
     shell_name: String,
     env_path: Option<PathBuf>,
     path_name: Option<String>,
+}
+
+/// What one step's shell reported. The unattended run and the terminal face both get it from [`Session::run_step`].
+pub(crate) struct StepOutcome {
+    /// Status the prompt hook reported.
+    pub status: u8,
+    /// Text the block wrote, without the prompt.
+    pub output: String,
+    /// UTC time just before the block was typed.
+    pub start: String,
+    /// UTC time when the hook reported the end.
+    pub end: String,
+}
+
+/// What the face wants while a command is still running.
+pub(crate) enum Wait {
+    /// Keep waiting for the prompt hook.
+    Continue,
+    /// Send Ctrl-C to the shell, then keep waiting for the hook.
+    Interrupt,
 }
 
 /// Play `steps` in `windows` and write `transcript`. The count is how many commands ran.
@@ -99,7 +124,7 @@ pub(crate) fn drive(
     };
     let shell_path = require_program(shell_program)?;
     ensure_transcript_directory(transcript)?;
-    let mut session = Session::prepare(tmux, windows, run, shell_program, &extras)?;
+    let mut session = Session::prepare(tmux, windows, run, shell_program, &extras, None)?;
     if let Some((name, script)) = setup {
         let bash = if matches!(shell, crate::index::Shell::Bash) {
             shell_path.clone()
@@ -113,7 +138,12 @@ pub(crate) fn drive(
 }
 
 /// Run the set-up script in the run folder, as the user who started play.
-fn run_setup(bash: &Path, run_dir: &Path, name: &str, script: &Path) -> Result<(), Failure> {
+pub(crate) fn run_setup(
+    bash: &Path,
+    run_dir: &Path,
+    name: &str,
+    script: &Path,
+) -> Result<(), Failure> {
     if !script.is_file() {
         return Err(Failure::Report(format!("the set-up script {name} is not a file\n")));
     }
@@ -137,7 +167,7 @@ fn run_setup(bash: &Path, run_dir: &Path, name: &str, script: &Path) -> Result<(
     Err(Failure::Report(format!("the set-up script {name} exited {status}\n")))
 }
 
-fn require_program(name: &str) -> Result<PathBuf, Failure> {
+pub(crate) fn require_program(name: &str) -> Result<PathBuf, Failure> {
     find_program(name).ok_or_else(|| Failure::Report(format!("{name} is not on PATH\n")))
 }
 
@@ -264,6 +294,7 @@ impl Session {
         run: Option<&Path>,
         shell_name: &str,
         extras: &DriveExtras<'_>,
+        control: Option<&Path>,
     ) -> Result<Self, Failure> {
         let suffix = unique_suffix();
         let keep_run = run.is_some();
@@ -271,7 +302,10 @@ impl Session {
             Some(path) => path.to_path_buf(),
             None => std::env::temp_dir().join(format!("tutorial-stepper-run-{suffix}")),
         };
-        let control_dir = std::env::temp_dir().join(format!("tutorial-stepper-control-{suffix}"));
+        let control_dir = match control {
+            Some(path) => path.to_path_buf(),
+            None => std::env::temp_dir().join(format!("tutorial-stepper-control-{suffix}")),
+        };
         if let Err(error) = fs::create_dir_all(&run_dir) {
             return Err(Failure::Report(format!("cannot create the run directory: {error}\n")));
         }
@@ -306,6 +340,7 @@ impl Session {
             }
             panes.push(Pane {
                 name: name.clone(),
+                id: String::new(),
                 dir,
                 status_path: control_dir.join(format!("status-{name}")),
                 log_path: control_dir.join(format!("log-{name}")),
@@ -318,6 +353,7 @@ impl Session {
             marker: format!("tutorial-stepper-prompt-{suffix}"),
             run_dir,
             keep_run,
+            retain: false,
             control_dir,
             panes,
             shell_name: shell_name.to_string(),
@@ -333,6 +369,11 @@ impl Session {
         }
         self.spawn_all()?;
         for index in 0..self.panes.len() {
+            let target = pane_target(&self.panes[index].name);
+            self.panes[index].id =
+                self.tmux_text(&["display-message", "-p", "-t", &target, "#{pane_id}"])?;
+        }
+        for index in 0..self.panes.len() {
             // The first status line is the shell becoming ready, not a command.
             self.wait_for_status_lines(index, 1)?;
             self.open_log(index)?;
@@ -345,17 +386,8 @@ impl Session {
         let mut commands_run = 0_usize;
         let mut last_command: Option<(String, usize)> = None;
         for step in steps {
-            let index = self.pane_index(&step.window)?;
-            let log_from =
-                fs::metadata(&self.panes[index].log_path).map(|meta| meta.len()).unwrap_or(0);
-            let status_from = complete_lines(&self.read_status(index)).len();
-            let start = format_utc(SystemTime::now());
-            self.type_command(index, &step.body)?;
-            self.wait_for_status_lines(index, status_from + 1)?;
-            let end = format_utc(SystemTime::now());
-            let got = self.latest_status(index)?;
-            let output = self.capture_output(index, log_from)?;
-            let failed = got != step.expected;
+            let outcome = self.run_step(step)?;
+            let failed = outcome.status != step.expected;
             let position = match step.kind {
                 PlayKind::Command => None,
                 PlayKind::Observation => Some(match &last_command {
@@ -370,10 +402,10 @@ impl Session {
                 line: step.line,
                 window: step.window.clone(),
                 command: step.body.clone(),
-                status: got,
-                start,
-                end,
-                output,
+                status: outcome.status,
+                start: outcome.start,
+                end: outcome.end,
+                output: outcome.output,
                 kind: step.kind,
                 position,
             });
@@ -387,7 +419,7 @@ impl Session {
                     page: step.page.clone(),
                     line: step.line,
                     body: step.body.clone(),
-                    got,
+                    got: outcome.status,
                     expected: step.expected,
                     kind: step.kind,
                 });
@@ -437,19 +469,20 @@ impl Session {
         let pane = &self.panes[index];
         let status = sh_single(&pane.status_path.display().to_string());
         let prompt = sh_single(&self.marker);
+        let window = sh_single(&pane.name);
         let program = sh_single(&shell.display().to_string());
         let environment = self.env_export();
         let launcher = match kind {
             crate::index::Shell::Bash => {
                 let hook = sh_single(&self.control_dir.join("hook").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexec {program} --noprofile --rcfile {hook}\n"
+                    "#!/bin/sh\nunset BASH_ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
                 )
             }
             crate::index::Shell::Zsh => {
                 let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                    "#!/bin/sh\nunset ENV\n{environment}export TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
                 )
             }
         };
@@ -514,7 +547,7 @@ impl Session {
 
     fn open_log(&self, index: usize) -> Result<(), Failure> {
         let pane = &self.panes[index];
-        let target = pane_target(&pane.name);
+        let target = self.shell_target(index);
         let pipe = format!("cat >> {}", sh_single(&pane.log_path.display().to_string()));
         self.tmux_ok(&["pipe-pane", "-o", "-t", &target, &pipe])
     }
@@ -522,7 +555,7 @@ impl Session {
     fn type_command(&self, index: usize, body: &str) -> Result<(), Failure> {
         // One trailing newline is the fence. Enter after the paste submits it.
         let typed = body.strip_suffix('\n').unwrap_or(body);
-        let target = pane_target(&self.panes[index].name);
+        let target = self.shell_target(index);
         let output = Command::new(&self.tmux)
             .args(["-f", "/dev/null", "-L", &self.socket, "send-keys", "-l", "-t"])
             .arg(&target)
@@ -589,7 +622,7 @@ impl Session {
     }
 
     fn pane_alive(&self, index: usize) -> bool {
-        let target = pane_target(&self.panes[index].name);
+        let target = self.shell_target(index);
         let output = Command::new(&self.tmux)
             .args([
                 "-f",
@@ -635,16 +668,282 @@ impl Session {
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        let _ = Command::new(&self.tmux)
-            .args(["-f", "/dev/null", "-L", &self.socket, "kill-server"])
+/// A session the terminal face can reopen without starting or killing it.
+pub(crate) struct SessionRecord {
+    /// Absolute path of `tmux`.
+    pub tmux: PathBuf,
+    /// Socket name (`tmux -L`).
+    pub socket: String,
+    /// Prompt marker the shells were given.
+    pub marker: String,
+    /// `bash` or `zsh`.
+    pub shell_name: String,
+    /// The run folder.
+    pub run_dir: PathBuf,
+    /// Hook, status and log files.
+    pub control_dir: PathBuf,
+    /// One entry per window: name, directory, status file, log file.
+    pub panes: Vec<PaneRecord>,
+}
+
+/// One window in a [`SessionRecord`].
+pub(crate) struct PaneRecord {
+    /// Window name.
+    pub name: String,
+    /// The window's directory.
+    pub dir: PathBuf,
+    /// Status file the prompt hook appends to.
+    pub status_path: PathBuf,
+    /// Pane log.
+    pub log_path: PathBuf,
+    /// tmux pane id of the shell, for example `%3`.
+    pub id: String,
+}
+
+impl Session {
+    /// Start the shells and keep the server when the caller asks. The control
+    /// directory is `run/.tutorial-stepper/control`, replacing any earlier one.
+    pub(crate) fn start_kept(
+        tmux: PathBuf,
+        windows: &[(String, String)],
+        run: &Path,
+        shell: crate::index::Shell,
+        environment: Option<&str>,
+    ) -> Result<Self, Failure> {
+        let control = run.join(".tutorial-stepper").join("control");
+        if control.exists() {
+            remove_tree(&control);
+        }
+        let shell_name = match shell {
+            crate::index::Shell::Bash => "bash",
+            crate::index::Shell::Zsh => "zsh",
+        };
+        let shell_path = require_program(shell_name)?;
+        let mut session = Self::prepare(
+            tmux,
+            windows,
+            Some(run),
+            shell_name,
+            &DriveExtras { environment, path: None },
+            Some(&control),
+        )?;
+        session.start(&shell_path, shell)?;
+        Ok(session)
+    }
+
+    /// Leave the server running when this value is dropped.
+    pub(crate) fn retain(&mut self) {
+        self.retain = true;
+    }
+
+    /// The socket name.
+    pub(crate) fn socket(&self) -> &str {
+        &self.socket
+    }
+
+    /// Absolute path of `tmux`.
+    pub(crate) fn tmux(&self) -> &Path {
+        &self.tmux
+    }
+
+    /// Enough to reopen this session from another process.
+    pub(crate) fn record(&self) -> SessionRecord {
+        SessionRecord {
+            tmux: self.tmux.clone(),
+            socket: self.socket.clone(),
+            marker: self.marker.clone(),
+            shell_name: self.shell_name.clone(),
+            run_dir: self.run_dir.clone(),
+            control_dir: self.control_dir.clone(),
+            panes: self
+                .panes
+                .iter()
+                .map(|pane| PaneRecord {
+                    name: pane.name.clone(),
+                    dir: pane.dir.clone(),
+                    status_path: pane.status_path.clone(),
+                    log_path: pane.log_path.clone(),
+                    id: pane.id.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Reopen a session. Dropping the result does not kill the server.
+    pub(crate) fn reopen(record: SessionRecord) -> Self {
+        let panes = record
+            .panes
+            .into_iter()
+            .map(|pane| Pane {
+                launcher_path: record.control_dir.join(format!("launch-{}", pane.name)),
+                name: pane.name,
+                id: pane.id,
+                dir: pane.dir,
+                status_path: pane.status_path,
+                log_path: pane.log_path,
+            })
+            .collect();
+        Self {
+            tmux: record.tmux,
+            socket: record.socket,
+            run_dir: record.run_dir,
+            keep_run: true,
+            retain: true,
+            control_dir: record.control_dir,
+            panes,
+            marker: record.marker,
+            shell_name: record.shell_name,
+            env_path: None,
+            path_name: None,
+        }
+    }
+
+    /// Whether `pane` still exists.
+    ///
+    /// `display-message` exits 0 for a pane id that is already gone, so the
+    /// check is a pane listing, which reports a missing pane.
+    pub(crate) fn pane_open(&self, pane: &str) -> bool {
+        self.tmux_output(&["list-panes", "-t", pane, "-F", "#{pane_id}"])
+            .is_ok_and(|output| output.status.success())
+    }
+
+    /// The pane's width in columns, or 80 when tmux cannot say.
+    pub(crate) fn pane_width(&self, pane: &str) -> usize {
+        self.tmux_text(&["display-message", "-p", "-t", pane, "#{pane_width}"])
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .filter(|width| *width > 0)
+            .unwrap_or(80)
+    }
+
+    /// Open the page as a pane to the left of `window`, running `command`.
+    pub(crate) fn split_page(&self, window: &str, command: &str) -> Result<(), Failure> {
+        let target = self.shell_in(window)?;
+        self.tmux_ok(&["split-window", "-h", "-b", "-l", "45%", "-t", &target, command])
+    }
+
+    /// Put `pane` to the left of `window` and select it.
+    pub(crate) fn place_page(&self, pane: &str, window: &str) -> Result<(), Failure> {
+        let target = self.shell_in(window)?;
+        let current = self.tmux_text(&["display-message", "-p", "-t", pane, "#{window_name}"])?;
+        if current != window {
+            self.tmux_ok(&["join-pane", "-h", "-b", "-l", "45%", "-s", pane, "-t", &target])?;
+        }
+        self.tmux_ok(&["select-window", "-t", &pane_target(window)])?;
+        self.tmux_ok(&["select-pane", "-t", pane])?;
+        Ok(())
+    }
+
+    /// Type `step` and wait until that shell's prompt hook reports the end.
+    pub(crate) fn run_step(
+        &self,
+        step: &crate::tutorial::PlayStep,
+    ) -> Result<StepOutcome, Failure> {
+        self.run_step_until(step, || Wait::Continue)
+    }
+
+    /// [`Session::run_step`], calling `poll` while the shell has not finished.
+    /// [`Wait::Interrupt`] sends Ctrl-C once; the end is still the prompt hook.
+    pub(crate) fn run_step_until(
+        &self,
+        step: &crate::tutorial::PlayStep,
+        mut poll: impl FnMut() -> Wait,
+    ) -> Result<StepOutcome, Failure> {
+        let index = self.pane_index(&step.window)?;
+        let log_from =
+            fs::metadata(&self.panes[index].log_path).map(|meta| meta.len()).unwrap_or(0);
+        let status_from = complete_lines(&self.read_status(index)).len();
+        let start = format_utc(SystemTime::now());
+        self.type_command(index, &step.body)?;
+        self.wait_until(index, status_from + 1, &mut poll)?;
+        let end = format_utc(SystemTime::now());
+        let status = self.latest_status(index)?;
+        let output = self.capture_output(index, log_from)?;
+        Ok(StepOutcome { status, output, start, end })
+    }
+
+    fn wait_until(
+        &self,
+        index: usize,
+        count: usize,
+        poll: &mut impl FnMut() -> Wait,
+    ) -> Result<(), Failure> {
+        let window = self.panes[index].name.clone();
+        let mut interrupted = false;
+        loop {
+            if complete_lines(&self.read_status(index)).len() >= count {
+                return Ok(());
+            }
+            if !interrupted && matches!(poll(), Wait::Interrupt) {
+                interrupted = true;
+                self.send_interrupt(index)?;
+            }
+            if !self.pane_alive(index) {
+                return Err(self.shell_died(&window));
+            }
+            thread::sleep(POLL);
+        }
+    }
+
+    fn send_interrupt(&self, index: usize) -> Result<(), Failure> {
+        let target = self.shell_target(index);
+        self.tmux_ok(&["send-keys", "-t", &target, "C-c"])
+    }
+
+    /// The shell pane. A window target would be the page once that pane is selected.
+    fn shell_target(&self, index: usize) -> String {
+        let pane = &self.panes[index];
+        if pane.id.is_empty() {
+            pane_target(&pane.name)
+        } else {
+            pane.id.clone()
+        }
+    }
+
+    fn shell_in(&self, window: &str) -> Result<String, Failure> {
+        let index = self.pane_index(window)?;
+        Ok(self.shell_target(index))
+    }
+
+    fn tmux_output(&self, args: &[&str]) -> Result<std::process::Output, Failure> {
+        Command::new(&self.tmux)
+            .arg("-f")
+            .arg("/dev/null")
+            .arg("-L")
+            .arg(&self.socket)
+            .args(args)
             .env_remove("TMUX")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        remove_tree(&self.control_dir);
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| Failure::Report(format!("cannot run tmux: {error}\n")))
+    }
+
+    fn tmux_text(&self, args: &[&str]) -> Result<String, Failure> {
+        let output = self.tmux_output(args)?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let name = args.first().copied().unwrap_or("command");
+            Err(Failure::Report(format!("tmux {name} failed: {detail}\n")))
+        }
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if !self.retain {
+            let _ = Command::new(&self.tmux)
+                .args(["-f", "/dev/null", "-L", &self.socket, "kill-server"])
+                .env_remove("TMUX")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            remove_tree(&self.control_dir);
+        }
         if !self.keep_run {
             remove_tree(&self.run_dir);
         }
@@ -668,16 +967,18 @@ fn remove_tree(path: &Path) {
 // The hook appends the exit status before the prompt is drawn, which is why
 // the output wait follows the status line. zsh's `status` parameter is
 // read-only, so the hook stores the code under another name.
+// The visible prompt is the window's name. The marker is a terminal title:
+// the pane log records it and the screen does not show it. Echo stays on,
+// so the typed command is visible. The title is where the output is cut.
 const BASH_HOOK: &str = r#"
 if [ -n "${TUTORIAL_STEPPER_ENV:-}" ]; then
   set -a
   . "$TUTORIAL_STEPPER_ENV"
   set +a
 fi
-PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"'
-PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
+PROMPT_COMMAND='status=$?; printf "%s\n" "$status" >> "$TUTORIAL_STEPPER_STATUS"; printf "\033]0;%s\007" "$TUTORIAL_STEPPER_PROMPT"'
+PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
-stty -echo
 bind 'set enable-bracketed-paste on'
 unset HISTFILE
 "#;
@@ -691,12 +992,12 @@ fi
 precmd() {
   local exit_status=$?
   print -r -- "$exit_status" >> "$TUTORIAL_STEPPER_STATUS"
+  print -n -- $'\e]0;'"$TUTORIAL_STEPPER_PROMPT"$'\a'
 }
-PS1=$'\n'"$TUTORIAL_STEPPER_PROMPT"$'\n'
+PS1="$TUTORIAL_STEPPER_WINDOW"'$ '
 PS2=
 unset RPS1
 unsetopt prompt_cr prompt_sp
-stty -echo
 unset HISTFILE
 setopt no_beep
 zle_highlight=(none)
@@ -721,7 +1022,7 @@ fn unique_suffix() -> String {
     format!("{}-{nanos}", std::process::id())
 }
 
-fn sh_single(text: &str) -> String {
+pub(crate) fn sh_single(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
@@ -744,26 +1045,23 @@ fn complete_lines(text: &str) -> Vec<&str> {
     lines
 }
 
-/// Output is the new log text with the prompt marker removed.
-/// The shell turns bracketed paste off before the command's output.
-/// zsh writes a clear sequence immediately before the marker.
-/// Carriage-return newline pairs become newlines. A lone carriage return stays.
+/// Output is the new log text, cut at the prompt marker.
+/// The marker is a terminal title (`ESC ] 0 ; marker BEL`). The screen does
+/// not show it. The shell turns bracketed paste off before the command's
+/// output, so text echoed before that switch, including the typed command,
+/// is not part of the output. Carriage-return newline pairs become newlines.
+/// A lone carriage return stays.
 fn command_output(bytes: &[u8], marker: &str) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
-    let crlf = format!("\r\n{marker}\r\n");
-    let lf = format!("\n{marker}\n");
-    let head = if let Some(index) = text.find(&crlf) {
-        &text[..index]
-    } else {
-        let index = text.find(&lf)?;
-        &text[..index]
-    };
+    let index = text.find(marker)?;
+    let head = text[..index].strip_suffix("\u{1b}]0;").unwrap_or(&text[..index]);
     Some(strip_paste_mode(head).replace("\r\n", "\n"))
 }
 
 /// Drop the shell's bracketed-paste switches and zsh's prompt redraw.
-/// The off switch may follow command text zsh displayed. A command that
-/// prints the same bytes in the middle keeps them.
+/// The off switch follows the typed command. A command that prints the same
+/// bytes in the middle keeps them. bash writes one carriage return after the
+/// off switch; zsh writes a carriage return, a carriage return and a newline.
 fn strip_paste_mode(text: &str) -> &str {
     const OFF: &str = "\u{1b}[?2004l";
     const ON: &str = "\u{1b}[?2004h";
@@ -773,6 +1071,7 @@ fn strip_paste_mode(text: &str) -> &str {
         rest.strip_prefix("\r\r\n")
             .or_else(|| rest.strip_prefix("\r\n"))
             .or_else(|| rest.strip_prefix('\n'))
+            .or_else(|| rest.strip_prefix('\r'))
             .unwrap_or(rest)
     } else {
         text
@@ -882,31 +1181,28 @@ mod tests {
     }
 
     #[test]
-    fn command_output_drops_the_prompt_and_carriage_returns() {
-        assert_eq!(command_output(b"hi\r\n\r\nMARKER\r\n", "MARKER").as_deref(), Some("hi\n"));
-        assert_eq!(command_output(b"\r\nMARKER\r\n", "MARKER").as_deref(), Some(""));
-        assert_eq!(
-            command_output(b"hello world\r\n\r\nMARKER\r\n", "MARKER").as_deref(),
-            Some("hello world\n")
-        );
-        assert_eq!(command_output(b"a\rb\r\n\r\nMARKER\r\n", "MARKER").as_deref(), Some("a\rb\n"));
+    fn command_output_drops_the_prompt_and_the_typed_command() {
+        let bash = "\u{1b}[7mecho hi\u{1b}[27m\r\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[Cecho hi\r\n\u{1b}[?2004l\rhi\r\n\u{1b}]0;MARKER\u{7}\u{1b}[?2004hbob$ ";
+        assert_eq!(command_output(bash.as_bytes(), "MARKER").as_deref(), Some("hi\n"));
+        let quiet = "\u{1b}[7mtrue\u{1b}[27m\u{8}\u{8}\u{8}\u{8}true\r\n\u{1b}[?2004l\r\u{1b}]0;MARKER\u{7}\u{1b}[?2004hbob$ ";
+        assert_eq!(command_output(quiet.as_bytes(), "MARKER").as_deref(), Some(""));
+        let words = "\u{1b}[?2004l\rhello world\r\n\u{1b}]0;MARKER\u{7}";
+        assert_eq!(command_output(words.as_bytes(), "MARKER").as_deref(), Some("hello world\n"));
+        let cr = "\u{1b}[?2004l\ra\rb\r\n\u{1b}]0;MARKER\u{7}";
+        assert_eq!(command_output(cr.as_bytes(), "MARKER").as_deref(), Some("a\rb\n"));
         assert_eq!(command_output(b"hi\r\n", "MARKER"), None);
-        let wrapped = b"\x1b[?2004l\r\r\nhi\r\n\x1b[?2004h\r\nMARKER\r\n";
-        assert_eq!(command_output(wrapped, "MARKER").as_deref(), Some("hi\n"));
-        let quiet = b"\x1b[?2004l\r\r\n\x1b[?2004h\r\nMARKER\r\n";
-        assert_eq!(command_output(quiet, "MARKER").as_deref(), Some(""));
     }
 
     #[test]
     fn command_output_drops_the_zsh_prompt_redraw() {
-        let hi =
-            "echo hi\u{1b}[?2004l\r\r\nhi\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let hi = "echo hi\u{1b}[?2004l\r\r\nhi\r\n\u{1b}]0;MARKER\u{7}\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[Jbob$ \u{1b}[K\u{1b}[?2004h";
         assert_eq!(command_output(hi.as_bytes(), "MARKER").as_deref(), Some("hi\n"));
-        let quiet = "false\u{1b}[?2004l\r\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let quiet = "false\u{1b}[?2004l\r\r\n\u{1b}]0;MARKER\u{7}\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[Jbob$ \u{1b}[K\u{1b}[?2004h";
         assert_eq!(command_output(quiet.as_bytes(), "MARKER").as_deref(), Some(""));
-        let lines = "echo one\r\r\necho two\u{1b}[K\u{1b}[?2004l\r\r\none\r\ntwo\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let lines =
+            "echo one\r\r\necho two\u{1b}[K\u{1b}[?2004l\r\r\none\r\ntwo\r\n\u{1b}]0;MARKER\u{7}";
         assert_eq!(command_output(lines.as_bytes(), "MARKER").as_deref(), Some("one\ntwo\n"));
-        let colour = "printf\u{1b}[?2004l\r\r\n\u{1b}[31mred\u{1b}[0m\r\n\u{1b}[0m\u{1b}[27m\u{1b}[24m\u{1b}[J\r\nMARKER\r\n";
+        let colour = "printf\u{1b}[?2004l\r\r\n\u{1b}[31mred\u{1b}[0m\r\n\u{1b}]0;MARKER\u{7}";
         assert_eq!(
             command_output(colour.as_bytes(), "MARKER").as_deref(),
             Some("\u{1b}[31mred\u{1b}[0m\n")

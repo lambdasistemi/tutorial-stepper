@@ -22,10 +22,8 @@ fn version_names_the_program_the_version_and_the_commit() {
     let output = run(&["--version"]);
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let line = stdout(&output).lines().next().unwrap_or("").to_string();
-    assert!(
-        line.starts_with("tutorial-stepper 0.1.0 (commit ") && line.ends_with(')'),
-        "version line was {line:?}"
-    );
+    let prefix = format!("tutorial-stepper {} (commit ", env!("CARGO_PKG_VERSION"));
+    assert!(line.starts_with(&prefix) && line.ends_with(')'), "version line was {line:?}");
 }
 
 #[test]
@@ -34,10 +32,8 @@ fn no_arguments_prints_a_one_screen_overview() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     let text = stdout(&output);
     let first = text.lines().next().unwrap_or("");
-    assert!(
-        first.starts_with("tutorial-stepper 0.1.0 (commit "),
-        "overview did not open with the identity: {first:?}"
-    );
+    let prefix = format!("tutorial-stepper {} (commit ", env!("CARGO_PKG_VERSION"));
+    assert!(first.starts_with(&prefix), "overview did not open with the identity: {first:?}");
     assert!(text.contains("check"), "overview did not name the check command:\n{text}");
     assert!(text.contains("script"), "overview did not name the script command:\n{text}");
     assert!(
@@ -126,6 +122,14 @@ fn play_help_describes_that_command_only() {
     );
     assert!(text.contains("tutorial-stepper play --auto"), "play help had no example:\n{text}");
     assert!(
+        text.contains("tutorial-stepper play examples/two-windows"),
+        "play help had no example of the page:\n{text}"
+    );
+    assert!(text.contains("$HOME"), "play help did not name the home directory:\n{text}");
+    assert!(text.contains("Enter"), "play help did not name Enter:\n{text}");
+    assert!(text.contains("q closes"), "play help did not name q:\n{text}");
+    assert!(!text.contains("--page"), "play help showed the hidden page flag:\n{text}");
+    assert!(
         text.contains("again at the end"),
         "play help did not say an observation runs again at the end:\n{text}"
     );
@@ -135,13 +139,30 @@ fn play_help_describes_that_command_only() {
 }
 
 #[test]
-fn play_without_auto_is_a_short_error() {
-    let output = run(&["play", "examples/one-window"]);
+fn play_auto_without_a_transcript_is_a_short_error() {
+    let output = run(&["play", "--auto", "examples/one-window"]);
     assert_eq!(output.status.code(), Some(2), "stderr:\n{}", stderr(&output));
     let text = stderr(&output);
-    assert!(text.contains("--auto"), "the error did not name --auto:\n{text}");
+    assert!(text.contains("--transcript"), "the error did not name --transcript:\n{text}");
+    assert!(text.contains("--help"), "the error did not point at help:\n{text}");
     let lines = text.lines().count();
     assert!(lines <= 8, "error is {lines} lines:\n{text}");
+}
+
+#[test]
+fn play_flags_without_auto_are_a_short_error() {
+    for args in [
+        ["play", "examples/one-window", "--transcript", "transcript.toml"].as_slice(),
+        ["play", "examples/one-window", "--path", "main"].as_slice(),
+        ["play", "examples/one-window", "--run-setup"].as_slice(),
+    ] {
+        let output = run(args);
+        assert_eq!(output.status.code(), Some(2), "args {args:?} stderr:\n{}", stderr(&output));
+        let text = stderr(&output);
+        assert!(text.contains("--auto"), "the error did not name --auto:\n{text}");
+        let lines = text.lines().count();
+        assert!(lines <= 8, "error is {lines} lines:\n{text}");
+    }
 }
 
 #[test]

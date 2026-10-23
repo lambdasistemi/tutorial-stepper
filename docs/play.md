@@ -4,7 +4,7 @@ A tutorial author runs `tutorial-stepper play --auto` on a tutorial directory an
 
 ## Who it is for
 
-The author, who wants the tutorial to run with nobody at the keyboard, whether the learners' shell is bash or zsh. Continuous integration runs the same command on the examples in this repository, under both shells. A learner's interactive session is not this command.
+The author, who wants the tutorial to run with nobody at the keyboard, whether the learners' shell is bash or zsh. Continuous integration runs the same command on the examples in this repository, under both shells. A learner plays the tutorial in their own terminal with `tutorial-stepper play DIR`, described in [Playing a tutorial in the terminal](terminal.md).
 
 ```mermaid
 flowchart TD
