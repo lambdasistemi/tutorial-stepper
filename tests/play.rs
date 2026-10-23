@@ -1,9 +1,9 @@
 //! `tutorial-stepper play --auto` on the shells a tutorial declares.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -1733,14 +1733,24 @@ fn executable(dir: &Path, name: &str, body: &str) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     fs::create_dir_all(dir).expect("the program directory");
     let path = dir.join(name);
-    // Write somewhere else, close the file, then rename. A fork that still
-    // holds the writing descriptor must not make the executed path busy.
+    // The writing descriptor lives in a short-lived child. A fork of this
+    // process cannot inherit it, so a sibling test cannot leave the
+    // installed path busy after the rename.
     let temporary = dir.join(format!(".{name}-{}.writing", NEXT.fetch_add(1, Ordering::Relaxed)));
-    fs::write(&temporary, body).expect("the program");
-    let mut permissions = fs::metadata(&temporary).expect("the program metadata").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&temporary, permissions).expect("the program is executable");
-    fs::rename(&temporary, &path).expect("the program is renamed into place");
+    let mut child = Command::new("bash")
+        .arg("-c")
+        .arg("cat > \"$1\" && chmod 755 \"$1\" && mv \"$1\" \"$2\"")
+        .arg("bash")
+        .arg(&temporary)
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bash writes the program");
+    child.stdin.take().expect("a stdin pipe").write_all(body.as_bytes()).expect("the program body");
+    let finished = child.wait_with_output().expect("bash finishes writing the program");
+    assert!(finished.status.success(), "the program was not installed: {}", text(&finished.stderr));
 }
 
 fn first_dotted(text: &str) -> Option<&str> {
@@ -1993,6 +2003,56 @@ needs = [\"number-tool >= 9.0\"]
     assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
     let err = text(&output.stderr);
     assert!(err.contains("number-tool 4.5.6 is older than 9.0"), "{err}");
+    assert!(!transcript.exists());
+    server_is_gone(pid);
+}
+
+#[test]
+fn a_program_open_for_writing_still_reports_its_version() {
+    let root = temp_tutorial("needs-busy");
+    let bin = root.join("bin");
+    executable(&bin, "number-tool", "#!/bin/sh\nprintf 'tool 4.5.6\\n' >&2\n");
+    write_tutorial(
+        &root,
+        "\
+pages = [\"welcome.md\"]
+
+[[window]]
+name = \"bob\"
+folder = \"bob\"
+needs = [\"number-tool >= 9.0\"]
+",
+        "```bash { window=bob }\necho hi\n```\n",
+    );
+    let program = bin.join("number-tool");
+    let ready = root.join("holder-ready");
+    // The descriptor stays open for writing until after the version is read.
+    // Closing it first would let a single attempt succeed.
+    let mut holder = Command::new("bash")
+        .arg("-c")
+        .arg("exec 3>>\"$1\"; touch \"$2\"; sleep 1.5")
+        .arg("bash")
+        .arg(&program)
+        .arg(&ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("a holder for the program");
+    for _ in 0..50 {
+        if ready.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(ready.exists(), "the holder did not open the program");
+    let transcript = root.join("transcript.toml");
+    let (output, pid) = play_prefixed(&root, &transcript, &[], Some(&bin));
+    let _ = holder.wait();
+    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", text(&output.stdout));
+    let err = text(&output.stderr);
+    assert!(err.contains("number-tool 4.5.6 is older than 9.0"), "{err}");
+    assert!(!err.contains("Text file busy"), "{err}");
     assert!(!transcript.exists());
     server_is_gone(pid);
 }

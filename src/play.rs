@@ -203,12 +203,23 @@ pub(crate) fn unmet_need(needs: &[(&str, Option<&str>)]) -> Option<String> {
 }
 
 fn version_text(path: &Path) -> Result<String, String> {
-    let output = Command::new(path)
-        .arg("--version")
-        .env_remove("TMUX")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("cannot run {}: {error}\n", path.display()))?;
+    // A writer can still hold the program open. Short pauses let that
+    // close. A hold that outlasts them is reported as itself.
+    const ATTEMPTS: u32 = 20;
+    let mut attempt = 0;
+    let output = loop {
+        match Command::new(path).arg("--version").env_remove("TMUX").stdin(Stdio::null()).output() {
+            Ok(output) => break output,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < ATTEMPTS =>
+            {
+                attempt += 1;
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(format!("cannot run {}: {error}\n", path.display())),
+        }
+    };
     let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
     combined.push_str(&String::from_utf8_lossy(&output.stderr));
     Ok(combined)
