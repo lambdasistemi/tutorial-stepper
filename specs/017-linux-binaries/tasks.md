@@ -12,16 +12,16 @@
 
 Test first. The subject is the release artifact directory.
 
-- [ ] A failing check that the directory holds `tutorial-stepper-<version>-x86_64-linux` and `tutorial-stepper-<version>-aarch64-linux`, that `SHA256SUMS` matches them, that `file` reports each statically linked for its architecture, and that `tutorial-stepper-linux-x86_64` is absent.
-- [ ] The smallest change that makes that check pass: the arm64 musl target, the two static packages, and the versioned names.
-- [ ] `README.md` tells a Linux user without Nix how to download the binary, check it, and run `--version`, in the same commit as that behaviour.
+- [x] A failing check that the directory holds `tutorial-stepper-<version>-x86_64-linux` and `tutorial-stepper-<version>-aarch64-linux`, that `SHA256SUMS` matches them, that `file` reports each statically linked for its architecture, and that `tutorial-stepper-linux-x86_64` is absent.
+- [x] The smallest change that makes that check pass: the arm64 musl target, the two static packages, and the versioned names.
+- [x] `README.md` tells a Linux user without Nix how to download the binary, check it, and run `--version`, in the same commit as that behaviour.
 
 ## Phase 3: Clean Ubuntu
 
 Test first. The subject is each binary. This needs a container daemon, so it is a continuous-integration job, not a sandboxed check.
 
-- [ ] A failing run of each binary in a clean Ubuntu 24.04 container: `--version` prints the release, and `check` on an example exits 0. The arm64 binary runs under emulation.
-- [ ] The job that runs that test on pull requests, without uploading anything. The build of both binaries stays on the NixOS build gate.
+- [x] A failing run of each binary in a clean Ubuntu 24.04 container: `--version` prints the release, and `check` on an example exits 0. The arm64 binary runs under emulation.
+- [x] The job that runs that test on pull requests, without uploading anything. The build of both binaries stays on the NixOS build gate.
 
 ## Phase 4: Verification
 

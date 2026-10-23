@@ -46,7 +46,12 @@ let
   };
 
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+  # The toolchain's lld dispatcher links a foreign architecture. The
+  # host `cc` does not. The directory name is the machine that builds.
+  rustLld =
+    "${rustToolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin/rust-lld";
 in
 {
-  inherit craneLib commonArgs cargoArtifacts version commit;
+  inherit craneLib commonArgs cargoArtifacts version commit rustToolchain rustLld;
 }

@@ -62,11 +62,11 @@ The crate, the release-please manifest, and the command-line behaviour stay as t
 
 ## What the release holds
 
-The x86_64 static package is the one the release already builds, retargeted only in its file name. The arm64 static package is the same crate with `CARGO_BUILD_TARGET=aarch64-unknown-linux-musl` and `target-feature=+crt-static`. crane keeps a separate dependency build for that target, so the host build's cache stays valid.
+The x86_64 static package is the one the release already builds, retargeted only in its file name. The arm64 static package is the same crate with `CARGO_BUILD_TARGET=aarch64-unknown-linux-musl` and `target-feature=+crt-static`. The host `cc` links the x86_64 objects and rejects the arm64 ones, so the arm64 link uses the toolchain's `rust-lld`. crane keeps a separate dependency build for that target, so the host build's cache stays valid. The commit is passed only to the final package build.
 
 `nix/release.nix` copies the two binaries to the names in the specification and writes `SHA256SUMS` with `sha256sum`. The release job already uploads every file in that directory, and only when release-please set `release_created`. A pull request never takes that branch. The build gate already builds `.#release-artifacts` on every pull request, so both binaries are built there once the derivation contains both.
 
-The sandboxed check is the test for the directory. It fails while the directory still has the old name. The Ubuntu script is the test for running. It mounts one example, runs `--version`, and runs `check`. The x86_64 container is `ubuntu:24.04` for that architecture. The arm64 container is `ubuntu:24.04` for arm64, under emulation.
+The sandboxed check is the test for the directory. It fails while the directory still has the old name. The Ubuntu script is the test for running. It mounts one example, runs `--version`, and runs `check`. The x86_64 binary runs in `ubuntu:24.04` for that architecture. The arm64 binary runs under `qemu-user-static` from that same Ubuntu release, inside the amd64 image.
 
 ## Decisions
 
@@ -74,4 +74,5 @@ The sandboxed check is the test for the directory. It fails while the directory 
 | --- | --- | --- |
 | musl targets from the pinned toolchain | a Nix cross stdenv and a C toolchain | The crate is pure Rust. The x86_64 release already links this way. |
 | Ubuntu job on GitHub's `ubuntu-24.04` runners | running the container inside the Nix sandbox | The sandbox has no container daemon. The organisation's NixOS runners build. This one job only runs the built files. |
+| Ubuntu 24.04's `qemu-user-static` inside the amd64 image | an arm64 container via binfmt, or a position-independent arm64 link | That emulator runs the fixed-address static binary and passes its arguments. A position-independent link segfaults under it. |
 | Build both binaries on every pull request | a path filter that skips the job | A required check that is skipped blocks the merge. Building both is the same cost as today's single static build plus one cross build, and the gate already builds the release derivation. |

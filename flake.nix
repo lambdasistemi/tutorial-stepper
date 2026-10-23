@@ -35,18 +35,25 @@
 
         packages = import ./nix/packages.nix { inherit craneEnv; };
 
+        release-artifacts = import ./nix/release.nix {
+          inherit pkgs packages;
+          version = craneEnv.version;
+        };
+
         checks = import ./nix/checks.nix {
-          inherit pkgs craneEnv;
+          inherit pkgs craneEnv release-artifacts;
           tutorial-stepper = packages.tutorial-stepper;
         };
       in
       {
         packages = {
           default = packages.tutorial-stepper;
-          inherit (packages) tutorial-stepper tutorial-stepper-static;
-          release-artifacts = import ./nix/release.nix {
-            inherit pkgs packages;
-          };
+          inherit (packages)
+            tutorial-stepper
+            tutorial-stepper-static
+            tutorial-stepper-static-aarch64
+            ;
+          inherit release-artifacts;
         };
 
         inherit checks;

@@ -29,7 +29,9 @@ jobs:
           nix build --quiet
           .#default
           .#tutorial-stepper-static
+          .#tutorial-stepper-static-aarch64
           .#release-artifacts
+          .#checks.x86_64-linux.release-binaries
           .#checks.x86_64-linux.clippy
           .#checks.x86_64-linux.nextest
           .#checks.x86_64-linux.fmt
@@ -37,6 +39,18 @@ jobs:
           .#checks.x86_64-linux.doc
           .#checks.x86_64-linux.version
           .#devShells.x86_64-linux.default.inputDerivation
+      - name: Copy the Linux binaries out of the store
+        working-directory: checkout
+        run: |
+          set -euo pipefail
+          out="$(nix build --quiet --print-out-paths .#release-artifacts)"
+          mkdir -p linux-binaries
+          cp -L "$out"/* linux-binaries/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: checkout/linux-binaries
+          if-no-files-found: error
 
   format:
     name: Format
@@ -139,3 +153,33 @@ jobs:
       - name: Test inside the development shell
         working-directory: checkout
         run: nix develop --accept-flake-config -c cargo test --locked
+
+  release-binaries:
+    name: Release binaries
+    needs: build-gate
+    runs-on: nixos
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+          path: checkout
+      - uses: cachix/cachix-action@v17
+        with:
+          name: paolino
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Names, checksums, and static link
+        working-directory: checkout
+        run: nix build --quiet .#checks.x86_64-linux.release-binaries
+
+  ubuntu-binaries:
+    name: Ubuntu binaries
+    needs: build-gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+          path: linux-binaries
+      - name: Version and check in Ubuntu 24.04
+        run: bash scripts/ubuntu-binaries.sh linux-binaries examples

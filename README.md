@@ -25,6 +25,42 @@ source, `tutorial-stepper script` prints one bash script, each command named wit
 window, for reading, diffing, and a quick run outside the stepper.
 [paolino/runmd](https://github.com/paolino/runmd) is superseded by `tutorial-stepper script`.
 
+## Install on Linux
+
+A learner without Nix downloads the binary for their machine from the
+[release page](https://github.com/lambdasistemi/tutorial-stepper/releases),
+checks it against the checksums published with that release, and runs it.
+
+```mermaid
+flowchart LR
+  page["Release page"]
+  file["Binary for this machine"]
+  sums["SHA256SUMS"]
+  run["--version prints the release"]
+  page --> file
+  page --> sums
+  file --> run
+  sums --> run
+```
+
+The release carries two statically linked files and one checksum file.
+`<version>` is the version `--version` prints.
+
+- `tutorial-stepper-<version>-x86_64-linux`
+- `tutorial-stepper-<version>-aarch64-linux`
+- `SHA256SUMS`
+
+```bash
+sha256sum -c SHA256SUMS
+chmod +x tutorial-stepper-<version>-x86_64-linux
+./tutorial-stepper-<version>-x86_64-linux --version
+./tutorial-stepper-<version>-x86_64-linux check examples/one-window
+```
+
+On arm64 the file name ends in `aarch64-linux`, and the same commands
+apply. Playing a tutorial still needs tmux and bash or zsh. The binary
+does not bring them, and it installs nothing. `check` needs neither.
+
 ```mermaid
 flowchart LR
   source["Tutorial: an index file and one Markdown file per page"]
