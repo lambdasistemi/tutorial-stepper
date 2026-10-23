@@ -13,10 +13,14 @@ theme:
 nav:
   - Start here:
       - tutorial-stepper: index.md
+  - Write a tutorial:
       - The format: format.md
+      - The commands: commands.md
+      - An author's guide: author.md
+  - Run a tutorial:
+      - The terminal: terminal.md
       - Playing unattended: play.md
       - A printed script: script.md
-      - The terminal: terminal.md
 plugins:
   - search
 markdown_extensions:

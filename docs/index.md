@@ -65,4 +65,4 @@ Intel Macs are not built. The binary is not signed with an Apple Developer ID, a
 
 ## Where to go next
 
-Read the [format](format.md), then how a tutorial [plays unattended](play.md) and how it is [printed as one script](script.md). A learner's session is [the terminal page](terminal.md).
+Read the [format](format.md), then the [commands](commands.md). The [author's guide](author.md) takes a plain Markdown page to a tutorial that plays unattended. A learner's session is [the terminal page](terminal.md). The unattended run is [played from the command line](play.md), and the same source [prints as one script](script.md).

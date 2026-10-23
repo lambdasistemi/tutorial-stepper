@@ -15,7 +15,8 @@ let
       || rel == "docs"
       || pkgs.lib.hasPrefix "docs/" rel
       || rel == "tools"
-      || rel == "tools/check_site.py";
+      || rel == "tools/check_site.py"
+      || rel == "tools/check_presentation.py";
   };
 
   mkdocs-terminal = pkgs.python3Packages.buildPythonPackage rec {
@@ -64,7 +65,16 @@ let
     }
     ''
       set -euo pipefail
-      python3 ${docsSrc}/tools/check_site.py ${site}
+      python3 ${docsSrc}/tools/check_site.py ${site} ${docsSrc}/docs
+      python3 ${docsSrc}/tools/check_presentation.py --no-speech \
+        --front ${docsSrc}/docs/index.md ${docsSrc}/docs
+      work=$(mktemp -d)
+      printf '# Overview\n\n## Who it is for\n\nA page with no diagram.\n' > "$work/overview.md"
+      if python3 ${docsSrc}/tools/check_presentation.py --no-speech \
+        --front "$work/overview.md" "$work"; then
+        printf 'presentation check accepted a structural page with no diagram\n' >&2
+        exit 1
+      fi
       touch "$out"
     '';
 in

@@ -19,15 +19,15 @@ Test first. The subject is `mkdocs build --strict` and the Terminal palette swit
 
 Test first. The subject is the built front page.
 
-- [ ] A failing check that the front page has a story heading, the learner's story, the author's story, and one context diagram.
-- [ ] The smallest change that makes that check pass: `docs/index.md`.
+- [x] A failing check that the front page has a story heading, the learner's story, the author's story, and one context diagram.
+- [x] The smallest change that makes that check pass: `docs/index.md`.
 
 ## Phase 4: The format, the commands, and the guide
 
 Test first. The subject is the built pages and the fences on them.
 
-- [ ] A failing check that the format specification, the command reference, and the author's guide are in the built site, that the guide contains a command fence in the format, and that a fence with a bad spelling is rejected. Every fence in `docs/` is read by that check.
-- [ ] The smallest change that makes that check pass: `docs/commands.md`, `docs/author.md`, and the pages already in `docs/` linked from the navigation.
+- [x] A failing check that the format specification, the command reference, and the author's guide are in the built site, that the guide contains a command fence in the format, and that a fence with a bad spelling is rejected. Every fence in `docs/` is read by that check.
+- [x] The smallest change that makes that check pass: `docs/commands.md`, `docs/author.md`, and the pages already in `docs/` linked from the navigation.
 
 ## Phase 5: The presentation check
 
