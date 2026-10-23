@@ -33,8 +33,8 @@ Test first. The subject is the built pages and the fences on them.
 
 Test first. The subject is `tools/check_presentation.py` on `docs/`.
 
-- [ ] A failing check that the presentation check reports no violations for the site's pages. Speech companions are not required.
-- [ ] Copy the presentation check into `tools/` and run it from the Nix check and from the documentation workflow.
+- [x] A failing check that the presentation check reports no violations for the site's pages. Speech companions are not required. A structural page with no diagram is rejected.
+- [x] Copy the presentation check into `tools/` and run it from the Nix check and from the documentation workflow.
 
 ## Phase 6: The library reference and the deploy
 

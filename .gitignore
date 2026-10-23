@@ -1,6 +1,9 @@
 # Investigation notes (local only)
 .llm/
 
+# Local browser-tool output (diagrams are reviewed from these shots; never committed)
+.playwright-mcp/
+
 # Cargo and Nix build products
 target/
 result
