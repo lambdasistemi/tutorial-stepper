@@ -12,8 +12,8 @@
 
 Test first. The subject is `mkdocs build --strict` and the Terminal palette switch.
 
-- [ ] A failing check that the built front page exists, names Terminal's palette switch, and was built strictly. The check fails while `mkdocs.yml` is absent.
-- [ ] The smallest change that makes that check pass: the theme, the palette switch, the Nix site derivation, and a documentation workflow that builds the check on a pull request and does not deploy it.
+- [x] A failing check that the built front page exists, names Terminal's palette switch, and was built strictly. The check fails while `mkdocs.yml` is absent.
+- [x] The smallest change that makes that check pass: the theme, the palette switch, the Nix site derivation, and a documentation workflow that builds the check on a pull request and does not deploy it.
 
 ## Phase 3: The front page
 

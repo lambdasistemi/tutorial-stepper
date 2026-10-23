@@ -24,6 +24,12 @@ def main(argv):
             failures.append("front page has no palette switch")
         if "tutorial-dark-palette" not in text:
             failures.append("front page does not load the dark palette")
+        if "A learner" not in text:
+            failures.append("front page does not tell the learner's story")
+        if "A tutorial author" not in text:
+            failures.append("front page does not tell the author's story")
+        if "mermaid" not in text or "Shells in tmux" not in text:
+            failures.append("front page has no context diagram")
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
