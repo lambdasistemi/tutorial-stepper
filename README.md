@@ -7,7 +7,8 @@ them.
 
 **A learner** installs a tutorial and plays it in their own terminal. Before the first page they
 choose the tutorial's settings, for example a shorter wait or another way to sign; any combination is
-allowed, and the page says when one is not among those the author tests. The page sits beside the window
+allowed, and the page says when one is not among those the author tests. Choosing again starts a new
+run and keeps the earlier folder. The page sits beside the window
 where the command runs; Enter runs the next command there, `e` places it at the prompt to edit first.
 When a command ends with a status the page did not expect, the page says so. Commands that only look
 at what happened, such as a wallet's balance or the chain's view of a transaction, stay on a list.

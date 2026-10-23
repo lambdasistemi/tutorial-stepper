@@ -523,34 +523,30 @@ impl Session {
             return Err(Failure::Report(format!("tmux new-session failed: {detail}\n")));
         }
         for pane in self.panes.iter().skip(1) {
-            let output = Command::new(&self.tmux)
-                .args([
-                    "-f",
-                    "/dev/null",
-                    "-L",
-                    &self.socket,
-                    "new-window",
-                    "-d",
-                    "-t",
-                    "play",
-                    "-n",
-                ])
-                .arg(&pane.name)
-                .arg("-c")
-                .arg(&pane.dir)
-                .arg(&pane.launcher_path)
-                .env_remove("TMUX")
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|error| Failure::Report(format!("cannot run tmux: {error}\n")))?;
-            if !output.status.success() {
-                let detail = String::from_utf8_lossy(&output.stderr);
-                return Err(Failure::Report(format!("tmux new-window failed: {detail}\n")));
-            }
+            self.spawn_new_window(pane)?;
         }
         Ok(())
+    }
+
+    fn spawn_new_window(&self, pane: &Pane) -> Result<(), Failure> {
+        let output = Command::new(&self.tmux)
+            .args(["-f", "/dev/null", "-L", &self.socket, "new-window", "-d", "-t", "play", "-n"])
+            .arg(&pane.name)
+            .arg("-c")
+            .arg(&pane.dir)
+            .arg(&pane.launcher_path)
+            .env_remove("TMUX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| Failure::Report(format!("cannot run tmux: {error}\n")))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            Err(Failure::Report(format!("tmux new-window failed: {detail}\n")))
+        }
     }
 
     fn open_log(&self, index: usize) -> Result<(), Failure> {
@@ -743,6 +739,201 @@ impl Session {
         )?;
         session.start(&shell_path, shell)?;
         Ok(session)
+    }
+
+    /// Start a server whose only window is the page, running `command`.
+    ///
+    /// No shell starts and `.env` is not written. The caller keeps the server
+    /// by calling [`Session::retain`]. On failure after the server exists, the
+    /// server is killed.
+    pub(crate) fn start_page(
+        tmux: PathBuf,
+        run: &Path,
+        shell: crate::index::Shell,
+        command: &str,
+    ) -> Result<Self, Failure> {
+        let control = run.join(".tutorial-stepper").join("control");
+        if control.exists() {
+            remove_tree(&control);
+        }
+        fs::create_dir_all(&control).map_err(|error| {
+            Failure::Report(format!("cannot create the run directory: {error}\n"))
+        })?;
+        let shell_name = match shell {
+            crate::index::Shell::Bash => "bash",
+            crate::index::Shell::Zsh => "zsh",
+        };
+        let suffix = unique_suffix();
+        let socket = format!("tutorial-stepper-{suffix}");
+        let output = Command::new(&tmux)
+            .args([
+                "-f",
+                "/dev/null",
+                "-L",
+                &socket,
+                "new-session",
+                "-d",
+                "-s",
+                "play",
+                "-n",
+                "page",
+                "-c",
+            ])
+            .arg(run)
+            .arg(command)
+            .env_remove("TMUX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| Failure::Report(format!("cannot run tmux: {error}\n")))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            kill_server(&tmux, &socket);
+            return Err(Failure::Report(format!("tmux new-session failed: {detail}\n")));
+        }
+        let mut session = Self {
+            tmux,
+            socket,
+            run_dir: absolute(run),
+            keep_run: true,
+            retain: false,
+            control_dir: absolute(&control),
+            panes: Vec::new(),
+            marker: format!("tutorial-stepper-prompt-{suffix}"),
+            shell_name: shell_name.to_string(),
+            env_path: None,
+            path_name: None,
+        };
+        match session.tmux_text(&["display-message", "-p", "-t", "play:=page", "#{pane_id}"]) {
+            Ok(pane) => {
+                session.remember_page(&pane);
+                Ok(session)
+            }
+            Err(failure) => {
+                kill_server(&session.tmux, &session.socket);
+                Err(failure)
+            }
+        }
+    }
+
+    /// Write `.env` when `environment` is set, then open one shell per window
+    /// in the server that is already running.
+    pub(crate) fn open_shells(
+        &mut self,
+        windows: &[(String, String)],
+        environment: Option<&str>,
+    ) -> Result<(), Failure> {
+        self.env_path = if let Some(text) = environment {
+            let path = self.run_dir.join(".env");
+            fs::write(&path, text)
+                .map_err(|error| Failure::Report(format!("cannot write .env: {error}\n")))?;
+            Some(absolute(&path))
+        } else {
+            None
+        };
+        let mut panes = Vec::new();
+        for (name, folder) in windows {
+            let dir = self.run_dir.join(folder);
+            fs::create_dir_all(&dir).map_err(|error| {
+                Failure::Report(format!("cannot create the window folder: {error}\n"))
+            })?;
+            panes.push(Pane {
+                name: name.clone(),
+                id: String::new(),
+                dir,
+                status_path: self.control_dir.join(format!("status-{name}")),
+                log_path: self.control_dir.join(format!("log-{name}")),
+                launcher_path: self.control_dir.join(format!("launch-{name}")),
+            });
+        }
+        if panes.is_empty() {
+            return Err(Failure::Report("a tutorial needs at least one window\n".to_string()));
+        }
+        self.panes = panes;
+        let kind = self.shell_kind();
+        let shell = require_program(&self.shell_name)?;
+        self.write_hook(kind)?;
+        for index in 0..self.panes.len() {
+            self.write_launcher(index, &shell, kind)?;
+        }
+        for pane in &self.panes {
+            self.spawn_new_window(pane)?;
+        }
+        for index in 0..self.panes.len() {
+            let target = pane_target(&self.panes[index].name);
+            self.panes[index].id =
+                self.tmux_text(&["display-message", "-p", "-t", &target, "#{pane_id}"])?;
+        }
+        for index in 0..self.panes.len() {
+            self.wait_for_status_lines(index, 1)?;
+            self.open_log(index)?;
+        }
+        Ok(())
+    }
+
+    /// Move `pane` onto a window named `holding` so the other windows can close.
+    pub(crate) fn park_page(&self, pane: &str) -> Result<(), Failure> {
+        let _ = self.tmux_ok(&["kill-window", "-t", "play:=holding"]);
+        self.tmux_ok(&["new-window", "-d", "-t", "play", "-n", "holding"])?;
+        self.tmux_ok(&["join-pane", "-s", pane, "-t", "play:=holding"])?;
+        self.tmux_ok(&["select-window", "-t", "play:=holding"])?;
+        self.tmux_ok(&["select-pane", "-t", pane])?;
+        Ok(())
+    }
+
+    /// Close every window except `holding`.
+    pub(crate) fn close_other_windows(&self) -> Result<(), Failure> {
+        let text = self.tmux_text(&["list-windows", "-F", "#{window_name}"])?;
+        for name in text.lines() {
+            if name.is_empty() || name == "holding" {
+                continue;
+            }
+            let _ = self.tmux_ok(&["kill-window", "-t", &format!("play:={name}")]);
+        }
+        Ok(())
+    }
+
+    /// Close the `holding` window. It is already gone when its last pane has left.
+    pub(crate) fn release_holding(&self) {
+        let _ = self.tmux_ok(&["kill-window", "-t", "play:=holding"]);
+    }
+
+    /// Point this session at `run` without starting a server.
+    pub(crate) fn retarget(&mut self, run: &Path) -> Result<(), Failure> {
+        let control = run.join(".tutorial-stepper").join("control");
+        fs::create_dir_all(&control).map_err(|error| {
+            Failure::Report(format!("cannot create the run directory: {error}\n"))
+        })?;
+        self.run_dir = absolute(run);
+        self.control_dir = absolute(&control);
+        self.env_path = None;
+        self.keep_run = true;
+        self.retain = true;
+        Ok(())
+    }
+
+    /// Record `pane` as the only window, named `page`.
+    pub(crate) fn remember_page(&mut self, pane: &str) {
+        let control = self.control_dir.clone();
+        let run = self.run_dir.clone();
+        self.env_path = None;
+        self.panes = vec![Pane {
+            name: "page".to_string(),
+            id: pane.to_string(),
+            dir: run,
+            status_path: control.join("status-page"),
+            log_path: control.join("log-page"),
+            launcher_path: control.join("launch-page"),
+        }];
+    }
+
+    fn shell_kind(&self) -> crate::index::Shell {
+        if self.shell_name == "zsh" {
+            crate::index::Shell::Zsh
+        } else {
+            crate::index::Shell::Bash
+        }
     }
 
     /// Leave the server running when this value is dropped.
@@ -1028,6 +1219,16 @@ impl Drop for Session {
             remove_tree(&self.run_dir);
         }
     }
+}
+
+fn kill_server(tmux: &Path, socket: &str) {
+    let _ = Command::new(tmux)
+        .args(["-f", "/dev/null", "-L", socket, "kill-server"])
+        .env_remove("TMUX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn pane_target(name: &str) -> String {
