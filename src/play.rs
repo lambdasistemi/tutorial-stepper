@@ -1,6 +1,7 @@
 //! One shell per window on a private tmux server, and the transcript of what ran.
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -472,6 +473,7 @@ impl Session {
         let pane = &self.panes[index];
         let status = sh_single(&pane.status_path.display().to_string());
         let command = sh_single(&command_path(&pane.status_path, &pane.name).display().to_string());
+        let given = sh_single(&given_path(&pane.status_path, &pane.name).display().to_string());
         let prompt = sh_single(&self.marker);
         let window = sh_single(&pane.name);
         let program = sh_single(&shell.display().to_string());
@@ -482,13 +484,13 @@ impl Session {
             crate::index::Shell::Bash => {
                 let hook = sh_single(&self.control_dir.join("hook").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset BASH_ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
+                    "#!/bin/sh\nunset BASH_ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_GIVEN={given}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexec {program} --noprofile --rcfile {hook}\n"
                 )
             }
             crate::index::Shell::Zsh => {
                 let zdot = sh_single(&self.control_dir.join("zdot").display().to_string());
                 format!(
-                    "#!/bin/sh\nunset ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
+                    "#!/bin/sh\nunset ENV\n{environment}export HISTFILE=/dev/null\nexport TUTORIAL_STEPPER_STATUS={status}\nexport TUTORIAL_STEPPER_COMMAND={command}\nexport TUTORIAL_STEPPER_GIVEN={given}\nexport TUTORIAL_STEPPER_PROMPT={prompt}\nexport TUTORIAL_STEPPER_WINDOW={window}\nexport ZDOTDIR={zdot}\nexec {program} --no-globalrcs\n"
                 )
             }
         };
@@ -900,6 +902,27 @@ impl Session {
         Ok(StepOutcome { status, output, start, end, command })
     }
 
+    /// Whether `window`'s shell has not reported the end of the command it was last given.
+    ///
+    /// The shell appends to its given file when it accepts a line, before that
+    /// command runs, and appends a status line when the command ends. The first
+    /// status line is the shell becoming ready, not an ending. This does not
+    /// read the pane.
+    pub(crate) fn window_is_busy(&self, window: &str) -> Result<bool, Failure> {
+        let index = self.pane_index(window)?;
+        if !self.pane_alive(index) {
+            return Err(self.shell_died(window));
+        }
+        let ended = complete_lines(&self.read_status(index)).len();
+        let given = complete_lines(&self.read_given(index)).len();
+        Ok(ended < given + 1)
+    }
+
+    fn read_given(&self, index: usize) -> String {
+        let pane = &self.panes[index];
+        fs::read_to_string(given_path(&pane.status_path, &pane.name)).unwrap_or_default()
+    }
+
     /// The line written beside the status file, with one trailing newline.
     ///
     /// The hook writes it from a shell variable after the command, immediately
@@ -1015,6 +1038,43 @@ fn command_path(status_path: &Path, name: &str) -> PathBuf {
     status_path.with_file_name(format!("command-{name}"))
 }
 
+fn given_path(status_path: &Path, name: &str) -> PathBuf {
+    status_path.with_file_name(format!("given-{name}"))
+}
+
+/// Append one observation run. The table matches the unattended transcript, with no tested path.
+pub(crate) fn record_observation(
+    path: &Path,
+    step: &PlayStep,
+    outcome: &StepOutcome,
+    position: &str,
+) -> Result<(), Failure> {
+    let entry = Entry {
+        path: None,
+        page: step.page.clone(),
+        line: step.line,
+        window: step.window.clone(),
+        command: outcome.command.clone(),
+        status: outcome.status,
+        start: outcome.start.clone(),
+        end: outcome.end.clone(),
+        output: outcome.output.clone(),
+        kind: PlayKind::Observation,
+        position: Some(position.to_string()),
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            Failure::Report(format!("cannot write the observation record: {error}\n"))
+        })?;
+    }
+    let mut file =
+        fs::OpenOptions::new().create(true).append(true).open(path).map_err(|error| {
+            Failure::Report(format!("cannot write the observation record: {error}\n"))
+        })?;
+    file.write_all(render_entry(&entry).as_bytes())
+        .map_err(|error| Failure::Report(format!("cannot write the observation record: {error}\n")))
+}
+
 fn remove_tree(path: &Path) {
     if fs::remove_dir_all(path).is_err() {
         thread::sleep(Duration::from_millis(50));
@@ -1027,7 +1087,10 @@ fn remove_tree(path: &Path) {
 // sourced before the prompt hook, so those assignments are not commands.
 // The accepted line is kept in a shell variable and written beside the status
 // file after the command, immediately before the status line: a file written
-// at accept time could be replaced by the command itself. A prompt redrawn
+// at accept time could be replaced by the command itself. Accepting a line
+// appends to the given file before the command runs, so a command still
+// running has been given and has not ended. The ready prompt does not append
+// there. A prompt redrawn
 // by Ctrl-C at the prompt writes no status, so cancelling an edit does not
 // look like a finished command. The first prompt is still the shell becoming
 // ready. zsh reads the editing buffer, because an empty Enter does not call
@@ -1046,6 +1109,9 @@ TUTORIAL_STEPPER_ACCEPTED=
 tutorial_stepper_accept_line() {
   TUTORIAL_STEPPER_LINE=$READLINE_LINE
   TUTORIAL_STEPPER_ACCEPTED=1
+  if [ -n "${TUTORIAL_STEPPER_GIVEN:-}" ]; then
+    printf 'given\n' >> "$TUTORIAL_STEPPER_GIVEN"
+  fi
 }
 bind -x '"\C-x\C-a": tutorial_stepper_accept_line'
 bind '"\C-m": "\C-x\C-a\C-j"'
@@ -1078,6 +1144,9 @@ TUTORIAL_STEPPER_ACCEPTED=
 tutorial_stepper_accept_line() {
   TUTORIAL_STEPPER_LINE=$BUFFER
   TUTORIAL_STEPPER_ACCEPTED=1
+  if [[ -n ${TUTORIAL_STEPPER_GIVEN:-} ]]; then
+    printf 'given\n' >> "$TUTORIAL_STEPPER_GIVEN"
+  fi
   zle .accept-line
 }
 zle -N accept-line tutorial_stepper_accept_line

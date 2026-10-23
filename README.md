@@ -10,8 +10,9 @@ choose the tutorial's settings, for example a shorter wait or another way to sig
 allowed, and the page says when one is not among those the author tests. The page sits beside the window
 where the command runs; Enter runs the next command there, `e` places it at the prompt to edit first.
 When a command ends with a status the page did not expect, the page says so. Commands that only look
-at what happened, such as a wallet's balance or the chain's view of a transaction, stay on a list the
-learner can run from at any time without losing their place. Once the explanations are understood,
+at what happened, such as a wallet's balance or the chain's view of a transaction, stay on a list.
+The learner presses `o`, sees the observations already reached, and runs one without losing their
+place. Once the explanations are understood,
 they press `f` and only the commands remain, each with its window. `f` again brings the
 explanations back.
 
