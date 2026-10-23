@@ -221,7 +221,7 @@ fn read_windows(item: &Item, text: &str, problems: &mut Vec<Problem>) -> Vec<Win
                 String::new()
             }
             Some(folder) => match read_string(folder, text, "folder", problems) {
-                Some(located) if is_relative_path(located.value) => located.value.to_string(),
+                Some(located) if is_window_folder(located.value) => located.value.to_string(),
                 Some(located) => {
                     problems.push(at(located.line, "folder must be a relative path".to_string()));
                     String::new()
@@ -548,6 +548,10 @@ fn is_page_path(value: &str) -> bool {
     is_relative_path(value) && value.ends_with(".md")
 }
 
+fn is_window_folder(value: &str) -> bool {
+    value == "." || is_relative_path(value)
+}
+
 fn is_relative_path(value: &str) -> bool {
     if value.is_empty() || value.contains('\0') {
         return false;
@@ -571,4 +575,26 @@ fn line_number(text: &str, span: Option<Range<usize>>) -> usize {
     };
     text.get(..span.start)
         .map_or(1, |prefix| prefix.bytes().filter(|byte| *byte == b'\n').count() + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_relative_path, is_window_folder};
+
+    #[test]
+    fn dot_is_a_window_folder_but_not_a_relative_path() {
+        assert!(is_window_folder("."));
+        assert!(!is_relative_path("."));
+    }
+
+    #[test]
+    fn window_folders_accept_normal_paths_and_refuse_escapes() {
+        for accepted in [".", "alice", "bob", "a/b", "chain"] {
+            assert!(is_window_folder(accepted), "{accepted}");
+        }
+        for refused in ["", "/bob", "..", "a/../b", "a/..", "../a"] {
+            assert!(!is_window_folder(refused), "{refused}");
+            assert!(!is_relative_path(refused), "{refused}");
+        }
+    }
 }

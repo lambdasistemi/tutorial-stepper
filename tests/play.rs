@@ -204,6 +204,30 @@ fn two_windows_run_in_their_own_folders() {
 }
 
 #[test]
+fn dot_folder_runs_in_the_run_folder() {
+    let dir = manifest_dir().join("examples/dot-folder");
+    let transcript = temp_tutorial("dot-folder-transcript").join("transcript.toml");
+    fs::create_dir_all(transcript.parent().expect("a parent")).expect("the transcript directory");
+    let (output, pid) = play(&dir, &transcript);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "2 commands played\n");
+    let commands = transcript_commands(&transcript);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(string_field(commands.get(0).expect("top"), "window"), "top");
+    assert_eq!(string_field(commands.get(1).expect("sub"), "window"), "sub");
+    let top = string_field(commands.get(0).expect("top"), "output");
+    let sub = string_field(commands.get(1).expect("sub"), "output");
+    assert_eq!(top, "", "the dot window wrote its file quietly");
+    assert_eq!(sub, "shared\n", "the sub window read the run folder's file");
+    server_is_gone(pid);
+}
+
+#[test]
 fn a_directory_change_stays_in_that_window() {
     let root = temp_tutorial("window-cd");
     write_tutorial(
@@ -1157,6 +1181,7 @@ fn every_valid_example_plays_under_bash_and_zsh() {
         "declared-status",
         "slow",
         "two-windows",
+        "dot-folder",
         "setup",
         "settings",
         "needs-missing",

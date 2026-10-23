@@ -47,8 +47,10 @@ jobs:
         run: |
           set -euo pipefail
           out="$(nix build --quiet --print-out-paths .#release-artifacts)"
+          rm -rf linux-binaries
           mkdir -p linux-binaries
-          cp -L "$out"/* linux-binaries/
+          cp -L --no-preserve=mode "$out"/* linux-binaries/
+          chmod +x linux-binaries/tutorial-stepper-*-linux
       - uses: actions/upload-artifact@v4
         with:
           name: linux-binaries

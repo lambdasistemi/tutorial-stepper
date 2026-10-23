@@ -380,7 +380,7 @@ fn every_sound_example_is_a_bash_script() {
     let names = sound_examples();
     assert_eq!(
         names.join(" "),
-        "continued declared-status if mode needs-missing observe observe-gone one-window settings setup slow status two-windows",
+        "continued declared-status dot-folder if mode needs-missing observe observe-gone one-window settings setup slow status two-windows",
         "every sound example is passed to bash -n"
     );
     for name in names {

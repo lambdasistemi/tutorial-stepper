@@ -57,7 +57,7 @@ name = "internal"
 values = { SIGNING = "internal" }
 ```
 
-`shell` is `bash` or `zsh`. When it is absent, the shell is bash. `setup` is a relative path to the set-up script. Each window has a `name`, a `folder` relative to the run folder, and `needs`: a program name, or a program name followed by `>=` and a version. A setting has a name, a default, and the values allowed; the default is one of those values. A path is one tested combination: a name, and one allowed value for every setting. Names and setting values are single words.
+`shell` is `bash` or `zsh`. When it is absent, the shell is bash. `setup` is a relative path to the set-up script. Each window has a `name`, a `folder` relative to the run folder (`.` is the run folder itself), and `needs`: a program name, or a program name followed by `>=` and a version. A setting has a name, a default, and the values allowed; the default is one of those values. A path is one tested combination: a name, and one allowed value for every setting. Names and setting values are single words.
 
 When the tutorial is played, the values in force are written to `.env` in the run folder before any window opens. The file is one `NAME=value` line per setting, in the order the settings are declared, with a newline after each line. There is no `export`, no quotes, and no blank line. Values are single words, so nothing is quoted. [Playing a tutorial unattended](play.md) says when the file is written and how a window loads it.
 
