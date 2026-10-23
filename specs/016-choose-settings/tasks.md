@@ -12,19 +12,19 @@
 
 Test first. A detached tmux session and the face are the subject. `--auto` stays green.
 
-- [ ] A failing test that the page lists each setting's allowed values with the default selected, and that the keys are written beside the list, before the first page.
-- [ ] A failing test that a combination that is not a tested path is announced on the choice, and that confirming plays the tutorial without repeating the announcement.
-- [ ] A failing test that Enter writes `.env` in the unattended form, that the window has those values, and that a command which reads a setting shows them beside it.
-- [ ] A failing test that quitting the choice writes no `.env` and starts no shell.
-- [ ] A failing test that a later visit continues the same run, and that asking to choose again moves the earlier folder aside without deleting it.
-- [ ] The smallest change that makes those tests pass.
-- [ ] `docs/terminal.md` describes the choice, the announcement, the values beside the commands, and the kept folder, in the same commit as that behaviour. `play --help` names the choice and stays within the line limit.
+- [x] A failing test that the page lists each setting's allowed values with the default selected, and that the keys are written beside the list, before the first page.
+- [x] A failing test that a combination that is not a tested path is announced on the choice, and that confirming plays the tutorial without repeating the announcement.
+- [x] A failing test that Enter writes `.env` in the unattended form, that the window has those values, and that a command which reads a setting shows them beside it.
+- [x] A failing test that quitting the choice writes no `.env` and starts no shell.
+- [x] A failing test that a later visit continues the same run, and that asking to choose again moves the earlier folder aside without deleting it.
+- [x] The smallest change that makes those tests pass.
+- [x] `docs/terminal.md` describes the choice, the announcement, the values beside the commands, and the kept folder, in the same commit as that behaviour. `play --help` names the choice and stays within the line limit.
 
 ## Phase 3: Verification
 
-- [ ] `nix flake check`
-- [ ] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a tutorial with settings, driven with `tmux send-keys`. The capture shows the choice, the announcement, the values beside the command, and the earlier folder kept.
-- [ ] The documentation presentation check on `README.md` and `docs/`.
+- [x] `nix flake check`
+- [x] `nix build .#default`, then in a detached tmux session `tutorial-stepper play` on a tutorial with settings, driven with `tmux send-keys`. The capture shows the choice, the announcement, the values beside the command, and the earlier folder kept.
+- [x] The documentation presentation check on `README.md` and `docs/`.
 
 ## Dependencies
 
