@@ -693,6 +693,9 @@ impl Session {
                 return Ok(());
             }
             if !self.pane_alive(index) {
+                // A group-delivered signal kills the pane in the same
+                // instant. Prefer the signal's exit over the shell's.
+                self.signal_cleanup();
                 return Err(self.shell_died(&window));
             }
             thread::sleep(POLL);
@@ -723,6 +726,7 @@ impl Session {
                 return Ok(output);
             }
             if !self.pane_alive(index) {
+                self.signal_cleanup();
                 return Err(self.shell_died(&window));
             }
             thread::sleep(POLL);
@@ -1262,6 +1266,7 @@ impl Session {
                 self.send_interrupt(index)?;
             }
             if !self.pane_alive(index) {
+                self.signal_cleanup();
                 return Err(self.shell_died(&window));
             }
             thread::sleep(POLL);
